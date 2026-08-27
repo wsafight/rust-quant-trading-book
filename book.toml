@@ -12,6 +12,9 @@ build-dir = "book/html"
 no-section-label = false
 default-theme = "light"
 preferred-dark-theme = "navy"
+site-url = "/rust-quant-trading-book/"
+git-repository-url = "https://github.com/wsafight/rust-quant-trading-book"
+git-repository-icon = "fab-github"
 
 [output.html.fold]
 enable = true

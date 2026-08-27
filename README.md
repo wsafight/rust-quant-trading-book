@@ -1,5 +1,9 @@
 # Rust 从入门到量化交易工程师
 
+[![Book](https://github.com/wsafight/rust-quant-trading-book/actions/workflows/book.yml/badge.svg)](https://github.com/wsafight/rust-quant-trading-book/actions/workflows/book.yml)
+
+在线阅读：[https://wsafight.github.io/rust-quant-trading-book/](https://wsafight.github.io/rust-quant-trading-book/)
+
 这是独立书稿[《Rust 从入门到量化交易工程师》](book/src/README.md)的源码仓库。书稿从 Rust 基础讲到行情、OMS、做市、回测与生产可靠性，以“能构建、验证和解释一条量化交易链路”为目标。
 
 ## 适合谁
