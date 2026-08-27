@@ -1,0 +1,5 @@
+# mdBook build output
+/book/html/
+
+# Cargo build output for the runnable companion project
+/book/code/target/

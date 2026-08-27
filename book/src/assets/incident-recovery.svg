@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="480" viewBox="0 0 1200 480" role="img" aria-labelledby="title desc">
+  <title id="title">交易事故响应与恢复门禁</title>
+  <desc id="desc">异常经检测后先限制风险，再停止增险、撤单与对账，只有根因隔离和恢复审批后才以 canary 恢复。</desc>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#344054"/></marker></defs>
+  <rect width="1200" height="480" fill="#f8fafc"/>
+  <text x="55" y="58" font-family="sans-serif" font-size="29" font-weight="700" fill="#101828">事故响应：先收敛资金风险，再恢复服务能力</text>
+  <g font-family="sans-serif" text-anchor="middle">
+    <rect x="45" y="150" width="150" height="90" rx="6" fill="#fff1c2" stroke="#b77900" stroke-width="2"/>
+    <rect x="235" y="150" width="150" height="90" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+    <rect x="425" y="150" width="150" height="90" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+    <rect x="615" y="150" width="150" height="90" rx="6" fill="#dff4ff" stroke="#1570a6" stroke-width="2"/>
+    <rect x="805" y="150" width="150" height="90" rx="6" fill="#ece9fe" stroke="#6938b8" stroke-width="2"/>
+    <rect x="995" y="150" width="160" height="90" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+    <text x="120" y="184" font-size="17" font-weight="700" fill="#7a4f00">Detect</text><text x="120" y="211" font-size="14" fill="#475467">SLO / invariant</text>
+    <text x="310" y="184" font-size="17" font-weight="700" fill="#9f1f17">Risk-off</text><text x="310" y="211" font-size="14" fill="#475467">停止新增风险</text>
+    <text x="500" y="184" font-size="17" font-weight="700" fill="#9f1f17">Cancel / Isolate</text><text x="500" y="211" font-size="14" fill="#475467">失败继续升级</text>
+    <text x="690" y="184" font-size="17" font-weight="700" fill="#105b88">Reconcile</text><text x="690" y="211" font-size="14" fill="#475467">订单 · 仓位 · 现金</text>
+    <text x="880" y="184" font-size="17" font-weight="700" fill="#53309a">Recovery Gate</text><text x="880" y="211" font-size="14" fill="#475467">根因 · owner · 审批</text>
+    <text x="1075" y="184" font-size="17" font-weight="700" fill="#075c35">Canary</text><text x="1075" y="211" font-size="14" fill="#475467">小限额逐级恢复</text>
+  </g>
+  <g stroke="#344054" stroke-width="3" marker-end="url(#a)">
+    <line x1="195" y1="195" x2="229" y2="195"/><line x1="385" y1="195" x2="419" y2="195"/>
+    <line x1="575" y1="195" x2="609" y2="195"/><line x1="765" y1="195" x2="799" y2="195"/>
+    <line x1="955" y1="195" x2="989" y2="195"/>
+  </g>
+  <path d="M1075 240V330H310V246" fill="none" stroke="#d92d20" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#a)"/>
+  <text x="690" y="360" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#9f1f17">观察指标再次越界：自动退回 risk-off，不把 canary 当成功</text>
+  <rect x="225" y="395" width="750" height="46" rx="6" fill="#e4e7ec" stroke="#667085"/>
+  <text x="600" y="425" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#344054">全程审计：触发事实 · 决策者 · 配置版本 · 未知状态 · 恢复证据</text>
+</svg>

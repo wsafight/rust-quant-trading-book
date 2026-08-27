@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650" role="img" aria-labelledby="title desc">
+  <title id="title">OMS 保守订单状态机</title>
+  <desc id="desc">订单从持久化意图进入待确认状态，可能开放、部分成交、待撤或不确定，并最终收敛到成交、撤销或拒绝。</desc>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#344054"/></marker></defs>
+  <rect width="1200" height="650" fill="#f8fafc"/>
+  <text x="42" y="52" font-family="sans-serif" font-size="29" font-weight="700" fill="#101828">OMS：事件改变事实，timeout 只产生不确定</text>
+
+  <g font-family="sans-serif" text-anchor="middle">
+    <rect x="30" y="145" width="130" height="70" rx="6" fill="#e4e7ec" stroke="#475467" stroke-width="2"/>
+    <rect x="190" y="145" width="145" height="70" rx="6" fill="#fff1c2" stroke="#b77900" stroke-width="2"/>
+    <rect x="370" y="145" width="125" height="70" rx="6" fill="#dff4ff" stroke="#1570a6" stroke-width="2"/>
+    <rect x="535" y="145" width="165" height="70" rx="6" fill="#dff4ff" stroke="#1570a6" stroke-width="2"/>
+    <rect x="740" y="145" width="165" height="70" rx="6" fill="#dff4ff" stroke="#1570a6" stroke-width="2"/>
+    <rect x="1010" y="90" width="145" height="70" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+    <rect x="1010" y="220" width="145" height="70" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+    <rect x="190" y="410" width="145" height="78" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+    <rect x="535" y="410" width="165" height="78" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+
+    <text x="95" y="186" font-size="16" font-weight="700" fill="#344054">IntentCreated</text>
+    <text x="262" y="186" font-size="17" font-weight="700" fill="#7a4f00">PendingNew</text>
+    <text x="432" y="186" font-size="17" font-weight="700" fill="#105b88">Open</text>
+    <text x="617" y="186" font-size="17" font-weight="700" fill="#105b88">PartiallyFilled</text>
+    <text x="822" y="186" font-size="17" font-weight="700" fill="#105b88">PendingCancel</text>
+    <text x="1082" y="132" font-size="17" font-weight="700" fill="#075c35">Filled</text>
+    <text x="1082" y="262" font-size="17" font-weight="700" fill="#075c35">Cancelled</text>
+    <text x="262" y="456" font-size="17" font-weight="700" fill="#9f1f17">Rejected</text>
+    <text x="617" y="445" font-size="17" font-weight="700" fill="#9f1f17">Uncertain</text>
+    <text x="617" y="469" font-size="13" fill="#475467">计入最坏暴露并对账</text>
+  </g>
+
+  <g stroke="#344054" stroke-width="2.5" fill="none" marker-end="url(#a)">
+    <line x1="160" y1="180" x2="184" y2="180"/>
+    <line x1="335" y1="180" x2="364" y2="180"/>
+    <line x1="495" y1="180" x2="529" y2="180"/>
+    <line x1="700" y1="180" x2="734" y2="180"/>
+    <path d="M905 164C952 153 970 129 1004 124"/>
+    <path d="M905 198C952 215 970 246 1004 254"/>
+    <path d="M432 145C500 101 758 101 822 139"/>
+    <path d="M617 145C710 74 911 70 1004 111"/>
+    <path d="M262 145C400 79 840 43 1004 105"/>
+    <line x1="262" y1="215" x2="262" y2="404"/>
+    <path d="M300 215C380 300 500 320 585 404"/>
+    <path d="M822 215C790 303 700 330 650 404"/>
+    <path d="M700 449H850C965 449 1045 365 1070 296"/>
+  </g>
+
+  <g font-family="sans-serif" font-size="13" fill="#475467" text-anchor="middle">
+    <text x="175" y="136">落盘后发送</text>
+    <text x="352" y="136">new ack</text>
+    <text x="515" y="136">partial fill</text>
+    <text x="720" y="136">cancel intent</text>
+    <text x="955" y="147">final fill</text>
+    <text x="955" y="232">cancel ack</text>
+    <text x="590" y="96">open 后直接 cancel</text>
+    <text x="850" y="74">partial / final fill</text>
+    <text x="780" y="38">fill-before-ack</text>
+    <text x="270" y="315">明确拒绝</text>
+    <text x="410" y="302">timeout</text>
+    <text x="730" y="315">timeout</text>
+    <text x="820" y="470">query / 私有事件收敛</text>
+  </g>
+
+  <text x="600" y="590" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#475467">重复 execution 不重复入账；部分成交显式建模；迟到事件不得让 terminal state 回退</text>
+</svg>

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500" role="img" aria-labelledby="title desc">
+  <title id="title">Snapshot 与 delta 同步状态</title>
+  <desc id="desc">连接后缓冲增量，获取快照，寻找覆盖下一序列的增量，进入有效状态；任何缺口使订单簿失效并重同步。</desc>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#344054"/></marker><marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#d92d20"/></marker></defs>
+  <rect width="1200" height="500" fill="#f8fafc"/>
+  <text x="55" y="58" font-family="sans-serif" font-size="29" font-weight="700" fill="#101828">Snapshot + delta 同步门禁</text>
+  <g font-family="sans-serif" text-anchor="middle">
+    <rect x="55" y="150" width="155" height="90" rx="6" fill="#e4e7ec" stroke="#475467" stroke-width="2"/>
+    <rect x="265" y="150" width="175" height="90" rx="6" fill="#dff4ff" stroke="#1570a6" stroke-width="2"/>
+    <rect x="495" y="150" width="180" height="90" rx="6" fill="#fff1c2" stroke="#b77900" stroke-width="2"/>
+    <rect x="730" y="150" width="185" height="90" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+    <rect x="970" y="150" width="175" height="90" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+    <rect x="495" y="350" width="180" height="88" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+    <text x="132" y="188" font-size="18" font-weight="700" fill="#344054">Disconnected</text><text x="132" y="214" font-size="14" fill="#475467">book 不可交易</text>
+    <text x="352" y="185" font-size="18" font-weight="700" fill="#105b88">Buffering</text><text x="352" y="211" font-size="14" fill="#475467">记录连接内 delta</text>
+    <text x="585" y="185" font-size="18" font-weight="700" fill="#7a4f00">SnapshotLoaded</text><text x="585" y="211" font-size="14" fill="#475467">基线 sequence = S</text>
+    <text x="822" y="185" font-size="18" font-weight="700" fill="#075c35">Bridging</text><text x="822" y="211" font-size="14" fill="#475467">first ≤ S+1 ≤ last</text>
+    <text x="1057" y="185" font-size="18" font-weight="700" fill="#075c35">Valid</text><text x="1057" y="211" font-size="14" fill="#475467">连续应用并发布</text>
+    <text x="585" y="386" font-size="18" font-weight="700" fill="#9f1f17">Invalid</text><text x="585" y="412" font-size="14" fill="#475467">停止策略输入，重新同步</text>
+  </g>
+  <g stroke="#344054" stroke-width="3" fill="none" marker-end="url(#a)">
+    <line x1="210" y1="195" x2="259" y2="195"/><line x1="440" y1="195" x2="489" y2="195"/>
+    <line x1="675" y1="195" x2="724" y2="195"/><line x1="915" y1="195" x2="964" y2="195"/>
+    <path d="M1057 240V285H822V246"/>
+  </g>
+  <g stroke="#d92d20" stroke-width="3" fill="none" marker-end="url(#r)">
+    <path d="M1057 246V394H681"/><path d="M730 220L635 344"/>
+  </g>
+  <path d="M495 394H352V246" fill="none" stroke="#344054" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#a)"/>
+  <g font-family="sans-serif" font-size="14" fill="#475467">
+    <text x="935" y="308">下一条连续 delta</text><text x="910" y="376">gap / stale / crossed / checksum failure</text>
+    <text x="330" y="376">新连接、新缓冲区、新 snapshot</text>
+  </g>
+</svg>

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">有界行情数据流水线</title>
+  <desc id="desc">网络数据经过原始记录、解码、有界队列和同步器产生有效订单簿，异常进入失效与重同步路径。</desc>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#344054"/></marker></defs>
+  <rect width="1200" height="420" fill="#f8fafc"/>
+  <text x="55" y="58" font-family="sans-serif" font-size="29" font-weight="700" fill="#101828">行情从字节到可交易状态</text>
+  <g font-family="sans-serif" text-anchor="middle">
+    <g fill="#dff4ff" stroke="#1570a6" stroke-width="2">
+      <rect x="55" y="140" width="150" height="88" rx="6"/><rect x="255" y="140" width="150" height="88" rx="6"/>
+    </g>
+    <rect x="455" y="140" width="150" height="88" rx="6" fill="#fff1c2" stroke="#b77900" stroke-width="2"/>
+    <rect x="655" y="140" width="150" height="88" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+    <rect x="855" y="140" width="150" height="88" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+    <rect x="1015" y="292" width="140" height="76" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+    <text x="130" y="177" font-size="18" font-weight="700" fill="#105b88">网络任务</text><text x="130" y="203" font-size="14" fill="#344054">frame + receive time</text>
+    <text x="330" y="177" font-size="18" font-weight="700" fill="#105b88">原始记录</text><text x="330" y="203" font-size="14" fill="#344054">append + checksum</text>
+    <text x="530" y="177" font-size="18" font-weight="700" fill="#7a4f00">解码与有界队列</text><text x="530" y="203" font-size="14" fill="#344054">schema · age · backpressure</text>
+    <text x="730" y="177" font-size="18" font-weight="700" fill="#075c35">同步器</text><text x="730" y="203" font-size="14" fill="#344054">snapshot + delta</text>
+    <text x="930" y="177" font-size="18" font-weight="700" fill="#075c35">Valid L2 Book</text><text x="930" y="203" font-size="14" fill="#344054">sequence · freshness</text>
+    <text x="1085" y="324" font-size="17" font-weight="700" fill="#9f1f17">Invalid / Risk-off</text><text x="1085" y="348" font-size="14" fill="#344054">重同步后才能恢复</text>
+  </g>
+  <g stroke="#344054" stroke-width="3" fill="none" marker-end="url(#a)">
+    <line x1="205" y1="184" x2="249" y2="184"/><line x1="405" y1="184" x2="449" y2="184"/>
+    <line x1="605" y1="184" x2="649" y2="184"/><line x1="805" y1="184" x2="849" y2="184"/>
+    <path d="M930 228V330H1009"/>
+  </g>
+  <g font-family="sans-serif" font-size="14" fill="#475467">
+    <text x="480" y="272">监控：depth / residence time / oldest age</text>
+    <text x="755" y="312">触发：gap · crossed · stale · queue overflow · schema error</text>
+  </g>
+</svg>

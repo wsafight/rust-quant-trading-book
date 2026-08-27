@@ -1,0 +1,21 @@
+[book]
+title = "Rust 从入门到量化交易工程师"
+authors = ["《Rust 从入门到量化交易工程师》编写组"]
+description = "从 Rust 基础到行情、OMS、做市、风控、回测与生产可靠性的工程实践"
+language = "zh-CN"
+src = "book/src"
+
+[build]
+build-dir = "book/html"
+
+[output.html]
+no-section-label = false
+default-theme = "light"
+preferred-dark-theme = "navy"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.code.hidelines]
+rust = "#"

@@ -1,0 +1,17 @@
+[package]
+name = "quant-engine"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Runnable companion project for Rust 从入门到量化交易工程师"
+
+[dependencies]
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "sync", "test-util", "time"] }
+
+[dev-dependencies]
+criterion = "0.7"
+
+[[bench]]
+name = "parse_level"
+harness = false
