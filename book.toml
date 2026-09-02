@@ -15,6 +15,7 @@ preferred-dark-theme = "navy"
 site-url = "/rust-quant-trading-book/"
 git-repository-url = "https://github.com/wsafight/rust-quant-trading-book"
 git-repository-icon = "fab-github"
+edit-url-template = "https://github.com/wsafight/rust-quant-trading-book/edit/main/{path}"
 
 [output.html.fold]
 enable = true

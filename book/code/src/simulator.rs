@@ -184,6 +184,7 @@ impl SimulatedVenue {
         let ack_at_ns = accepted_at_ns
             .checked_add(self.config.new_ack_latency_ns)
             .ok_or(SimulatorError::ArithmeticOverflow)?;
+        let sequence = self.reserve_report_sequence()?;
         let client_order_id = request.client_order_id.clone();
         self.orders.insert(
             client_order_id.clone(),
@@ -194,7 +195,7 @@ impl SimulatedVenue {
                 cancel_effective_at_ns: None,
             },
         );
-        self.schedule_report(ack_at_ns, client_order_id, VenueReport::NewAck);
+        self.push_report(sequence, ack_at_ns, client_order_id, VenueReport::NewAck);
         Ok(())
     }
 
@@ -203,31 +204,39 @@ impl SimulatedVenue {
         client_order_id: &ClientOrderId,
         now_ns: u64,
     ) -> Result<(), SimulatorError> {
-        let order = self
-            .orders
-            .get_mut(client_order_id)
-            .ok_or_else(|| SimulatorError::UnknownOrder(client_order_id.clone()))?;
-        if order.remaining_lots == 0
-            || order
-                .cancel_effective_at_ns
-                .is_some_and(|effective| effective <= now_ns)
-        {
-            return Err(SimulatorError::OrderAlreadyTerminal(
-                client_order_id.clone(),
-            ));
-        }
-        if order.cancel_effective_at_ns.is_some() {
-            return Ok(());
-        }
+        let accepted_at_ns = {
+            let order = self
+                .orders
+                .get(client_order_id)
+                .ok_or_else(|| SimulatorError::UnknownOrder(client_order_id.clone()))?;
+            if order.remaining_lots == 0
+                || order
+                    .cancel_effective_at_ns
+                    .is_some_and(|effective| effective <= now_ns)
+            {
+                return Err(SimulatorError::OrderAlreadyTerminal(
+                    client_order_id.clone(),
+                ));
+            }
+            if order.cancel_effective_at_ns.is_some() {
+                return Ok(());
+            }
+            order.accepted_at_ns
+        };
         let effective_at_ns = now_ns
-            .max(order.accepted_at_ns)
+            .max(accepted_at_ns)
             .checked_add(self.config.cancel_latency_ns)
             .ok_or(SimulatorError::ArithmeticOverflow)?;
         let report_at_ns = effective_at_ns
             .checked_add(self.config.cancel_ack_latency_ns)
             .ok_or(SimulatorError::ArithmeticOverflow)?;
-        order.cancel_effective_at_ns = Some(effective_at_ns);
-        self.schedule_report(
+        let sequence = self.reserve_report_sequence()?;
+        self.orders
+            .get_mut(client_order_id)
+            .expect("order was validated above")
+            .cancel_effective_at_ns = Some(effective_at_ns);
+        self.push_report(
+            sequence,
             report_at_ns,
             client_order_id.clone(),
             VenueReport::CancelAck,
@@ -248,10 +257,9 @@ impl SimulatedVenue {
                 best_ask: observation.best_ask.get(),
             });
         }
-        self.last_market_ns = observation.at_ns;
-
+        let mut updates = Vec::new();
         let mut fills = Vec::new();
-        for (client_order_id, order) in &mut self.orders {
+        for (client_order_id, order) in &self.orders {
             if order.remaining_lots == 0 || observation.at_ns < order.accepted_at_ns {
                 continue;
             }
@@ -261,38 +269,66 @@ impl SimulatedVenue {
             {
                 continue;
             }
-            let fill_lots = fill_quantity(self.config.fill_model, order, observation);
-            if fill_lots == 0 {
-                continue;
+            let preview = preview_fill(self.config.fill_model, order, observation);
+            if preview.queue_ahead_lots != order.request.queue_ahead_lots || preview.fill_lots != 0
+            {
+                updates.push((
+                    client_order_id.clone(),
+                    preview.queue_ahead_lots,
+                    order.remaining_lots - preview.fill_lots,
+                ));
             }
-            order.remaining_lots -= fill_lots;
-            fills.push((
-                client_order_id.clone(),
-                order.request.side,
-                order.request.price,
-                QtyLots::new(fill_lots).expect("fill quantity is positive"),
-            ));
+            if preview.fill_lots != 0 {
+                fills.push((
+                    client_order_id.clone(),
+                    order.request.side,
+                    order.request.price,
+                    QtyLots::new(preview.fill_lots).expect("fill quantity is positive"),
+                ));
+            }
         }
 
-        for (client_order_id, side, price, qty) in fills {
-            let execution_id = format!("sim-{}", self.next_execution);
-            self.next_execution = self
+        let fill_count =
+            u64::try_from(fills.len()).map_err(|_| SimulatorError::ArithmeticOverflow)?;
+        let next_execution = self
+            .next_execution
+            .checked_add(fill_count)
+            .ok_or(SimulatorError::ArithmeticOverflow)?;
+        let next_sequence = self
+            .next_sequence
+            .checked_add(fill_count)
+            .ok_or(SimulatorError::ArithmeticOverflow)?;
+        let report_at_ns = if fills.is_empty() {
+            None
+        } else {
+            Some(
+                observation
+                    .at_ns
+                    .checked_add(self.config.fill_report_latency_ns)
+                    .ok_or(SimulatorError::ArithmeticOverflow)?,
+            )
+        };
+        let mut reports = Vec::with_capacity(fills.len());
+        for (offset, (client_order_id, side, price, qty)) in fills.into_iter().enumerate() {
+            let offset = u64::try_from(offset).map_err(|_| SimulatorError::ArithmeticOverflow)?;
+            let execution = self
                 .next_execution
-                .checked_add(1)
+                .checked_add(offset)
                 .ok_or(SimulatorError::ArithmeticOverflow)?;
+            let sequence = self
+                .next_sequence
+                .checked_add(offset)
+                .ok_or(SimulatorError::ArithmeticOverflow)?;
+            let execution_id = format!("sim-{execution}");
             let fee_quote = i128::from(price.get())
                 .checked_mul(i128::from(qty.get()))
                 .and_then(|value| value.checked_mul(i128::from(self.config.maker_fee_bps)))
                 .map(|value| value / 10_000)
                 .ok_or(SimulatorError::ArithmeticOverflow)?;
-            let report_at_ns = observation
-                .at_ns
-                .checked_add(self.config.fill_report_latency_ns)
-                .ok_or(SimulatorError::ArithmeticOverflow)?;
-            self.schedule_report(
-                report_at_ns,
+            reports.push(TimedVenueReport {
+                at_ns: report_at_ns.expect("fills have a report time"),
                 client_order_id,
-                VenueReport::Fill(Fill {
+                report: VenueReport::Fill(Fill {
                     key: ExecutionKey::new(
                         &self.venue,
                         &self.account,
@@ -304,8 +340,22 @@ impl SimulatedVenue {
                     qty,
                     fee_quote,
                 }),
-            );
+                sequence,
+            });
         }
+
+        for (client_order_id, queue_ahead_lots, remaining_lots) in updates {
+            let order = self
+                .orders
+                .get_mut(&client_order_id)
+                .expect("order was planned from this map");
+            order.request.queue_ahead_lots = queue_ahead_lots;
+            order.remaining_lots = remaining_lots;
+        }
+        self.next_execution = next_execution;
+        self.next_sequence = next_sequence;
+        self.last_market_ns = observation.at_ns;
+        self.reports.extend(reports);
         Ok(())
     }
 
@@ -355,9 +405,22 @@ impl SimulatedVenue {
         })
     }
 
-    fn schedule_report(&mut self, at_ns: u64, client_order_id: ClientOrderId, report: VenueReport) {
+    fn reserve_report_sequence(&mut self) -> Result<u64, SimulatorError> {
         let sequence = self.next_sequence;
-        self.next_sequence += 1;
+        self.next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .ok_or(SimulatorError::ArithmeticOverflow)?;
+        Ok(sequence)
+    }
+
+    fn push_report(
+        &mut self,
+        sequence: u64,
+        at_ns: u64,
+        client_order_id: ClientOrderId,
+        report: VenueReport,
+    ) {
         self.reports.push(TimedVenueReport {
             at_ns,
             client_order_id,
@@ -367,48 +430,63 @@ impl SimulatedVenue {
     }
 }
 
-fn fill_quantity(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FillPreview {
+    fill_lots: i64,
+    queue_ahead_lots: i64,
+}
+
+fn preview_fill(
     model: FillModel,
-    order: &mut WorkingOrder,
+    order: &WorkingOrder,
     observation: MarketObservation,
-) -> i64 {
+) -> FillPreview {
+    let unchanged = |fill_lots| FillPreview {
+        fill_lots,
+        queue_ahead_lots: order.request.queue_ahead_lots,
+    };
     match model {
         FillModel::Touch => {
             let touched = match order.request.side {
                 Side::Buy => observation.best_ask <= order.request.price,
                 Side::Sell => observation.best_bid >= order.request.price,
             };
-            if touched { order.remaining_lots } else { 0 }
+            unchanged(if touched { order.remaining_lots } else { 0 })
         }
-        FillModel::TradeThrough => observation.trade.map_or(0, |trade| {
+        FillModel::TradeThrough => unchanged(observation.trade.map_or(0, |trade| {
             let through = match order.request.side {
                 Side::Buy => trade.aggressor == Side::Sell && trade.price < order.request.price,
                 Side::Sell => trade.aggressor == Side::Buy && trade.price > order.request.price,
             };
             if through { order.remaining_lots } else { 0 }
-        }),
-        FillModel::L2Queue => observation.trade.map_or(0, |trade| {
-            let opposing = match order.request.side {
-                Side::Buy => trade.aggressor == Side::Sell,
-                Side::Sell => trade.aggressor == Side::Buy,
-            };
-            if !opposing {
-                return 0;
-            }
-            let through = match order.request.side {
-                Side::Buy => trade.price < order.request.price,
-                Side::Sell => trade.price > order.request.price,
-            };
-            if through {
-                return order.remaining_lots;
-            }
-            if trade.price != order.request.price {
-                return 0;
-            }
-            let queue_consumed = order.request.queue_ahead_lots.min(trade.qty.get());
-            order.request.queue_ahead_lots -= queue_consumed;
-            (trade.qty.get() - queue_consumed).min(order.remaining_lots)
-        }),
+        })),
+        FillModel::L2Queue => observation.trade.map_or_else(
+            || unchanged(0),
+            |trade| {
+                let opposing = match order.request.side {
+                    Side::Buy => trade.aggressor == Side::Sell,
+                    Side::Sell => trade.aggressor == Side::Buy,
+                };
+                if !opposing {
+                    return unchanged(0);
+                }
+                let through = match order.request.side {
+                    Side::Buy => trade.price < order.request.price,
+                    Side::Sell => trade.price > order.request.price,
+                };
+                if through {
+                    return unchanged(order.remaining_lots);
+                }
+                if trade.price != order.request.price {
+                    return unchanged(0);
+                }
+                let queue_consumed = order.request.queue_ahead_lots.min(trade.qty.get());
+                FillPreview {
+                    fill_lots: (trade.qty.get() - queue_consumed).min(order.remaining_lots),
+                    queue_ahead_lots: order.request.queue_ahead_lots - queue_consumed,
+                }
+            },
+        ),
     }
 }
 
@@ -438,7 +516,7 @@ mod tests {
 
     fn request(id: &str, side: Side, price_ticks: i64, qty_lots: i64) -> SimOrderRequest {
         SimOrderRequest {
-            client_order_id: ClientOrderId::new(id),
+            client_order_id: ClientOrderId::new(id).unwrap(),
             side,
             price: price(price_ticks),
             qty: qty(qty_lots),
@@ -510,7 +588,9 @@ mod tests {
         };
         assert_eq!(fill.qty, qty(2));
         assert_eq!(
-            venue.reconcile(&ClientOrderId::new("order-1"), 10).unwrap(),
+            venue
+                .reconcile(&ClientOrderId::new("order-1").unwrap(), 10)
+                .unwrap(),
             VenueOrderTruth {
                 status: VenueOrderStatus::Working,
                 filled_lots: 2,
@@ -522,7 +602,7 @@ mod tests {
     #[test]
     fn cancel_in_flight_allows_fills_but_effective_cancel_blocks_them() {
         let mut venue = SimulatedVenue::new(config(FillModel::L2Queue), "SIM", "paper", "BTC");
-        let id = ClientOrderId::new("order-1");
+        let id = ClientOrderId::new("order-1").unwrap();
         venue
             .submit(request(id.as_str(), Side::Sell, 101, 2), 0)
             .unwrap();
@@ -561,5 +641,87 @@ mod tests {
                 remaining_lots: 1,
             }
         );
+    }
+
+    #[test]
+    fn submit_is_atomic_when_report_sequence_is_exhausted() {
+        let mut venue = SimulatedVenue::new(config(FillModel::Touch), "SIM", "paper", "BTC");
+        let id = ClientOrderId::new("order-1").unwrap();
+        venue.next_sequence = u64::MAX;
+
+        assert_eq!(
+            venue.submit(request(id.as_str(), Side::Buy, 100, 1), 0),
+            Err(SimulatorError::ArithmeticOverflow)
+        );
+        assert_eq!(
+            venue.reconcile(&id, 0),
+            Err(SimulatorError::UnknownOrder(id))
+        );
+        assert!(venue.reports.is_empty());
+        assert_eq!(venue.next_sequence, u64::MAX);
+    }
+
+    #[test]
+    fn cancel_is_atomic_when_report_sequence_is_exhausted() {
+        let mut venue = SimulatedVenue::new(config(FillModel::Touch), "SIM", "paper", "BTC");
+        let id = ClientOrderId::new("order-1").unwrap();
+        venue
+            .submit(request(id.as_str(), Side::Buy, 100, 1), 0)
+            .unwrap();
+        venue.drain_reports(u64::MAX);
+        venue.next_sequence = u64::MAX;
+
+        assert_eq!(
+            venue.cancel(&id, 10),
+            Err(SimulatorError::ArithmeticOverflow)
+        );
+        assert_eq!(
+            venue.reconcile(&id, 100).unwrap(),
+            VenueOrderTruth {
+                status: VenueOrderStatus::Working,
+                filled_lots: 0,
+                remaining_lots: 1,
+            }
+        );
+        assert!(venue.reports.is_empty());
+        assert_eq!(venue.next_sequence, u64::MAX);
+    }
+
+    #[test]
+    fn market_fill_is_atomic_when_identifiers_are_exhausted() {
+        let mut venue = SimulatedVenue::new(config(FillModel::L2Queue), "SIM", "paper", "BTC");
+        let id = ClientOrderId::new("order-1").unwrap();
+        let mut order = request(id.as_str(), Side::Buy, 100, 2);
+        order.queue_ahead_lots = 1;
+        venue.submit(order, 0).unwrap();
+        venue.drain_reports(u64::MAX);
+        let observation = MarketObservation {
+            at_ns: 5,
+            best_bid: price(100),
+            best_ask: price(101),
+            trade: Some(MarketTrade {
+                aggressor: Side::Sell,
+                price: price(100),
+                qty: qty(2),
+            }),
+        };
+
+        venue.next_sequence = u64::MAX;
+        assert_eq!(
+            venue.on_market(observation),
+            Err(SimulatorError::ArithmeticOverflow)
+        );
+        venue.next_sequence = 1;
+        venue.next_execution = u64::MAX;
+        assert_eq!(
+            venue.on_market(observation),
+            Err(SimulatorError::ArithmeticOverflow)
+        );
+
+        let order = venue.orders.get(&id).unwrap();
+        assert_eq!(order.request.queue_ahead_lots, 1);
+        assert_eq!(order.remaining_lots, 2);
+        assert_eq!(venue.last_market_ns, 0);
+        assert!(venue.reports.is_empty());
     }
 }

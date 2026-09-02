@@ -61,10 +61,39 @@ impl RiskSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RiskRejectReason {
+    InvalidExposure,
+    InvalidLimits,
+    TradingDisabled,
+    StaleMarketData,
+    UntradableBook,
+    PositionLimit,
+}
+
+impl RiskRejectReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidExposure => "invalid_exposure",
+            Self::InvalidLimits => "invalid_limits",
+            Self::TradingDisabled => "trading_disabled",
+            Self::StaleMarketData => "stale_market_data",
+            Self::UntradableBook => "untradable_book",
+            Self::PositionLimit => "position_limit",
+        }
+    }
+}
+
+impl fmt::Display for RiskRejectReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RiskDecision {
     Allow,
     Resize { max_qty_lots: i64 },
-    Reject(&'static str),
+    Reject(RiskRejectReason),
 }
 // ANCHOR_END: risk_model
 
@@ -84,18 +113,18 @@ pub fn worst_short(snapshot: RiskSnapshot) -> i128 {
 pub fn check(intent: OrderIntent, snapshot: RiskSnapshot) -> RiskDecision {
     if let Err(error) = snapshot.validate() {
         return RiskDecision::Reject(match error {
-            RiskSnapshotError::NegativeOpenExposure => "invalid_exposure",
-            RiskSnapshotError::InvalidLimits => "invalid_limits",
+            RiskSnapshotError::NegativeOpenExposure => RiskRejectReason::InvalidExposure,
+            RiskSnapshotError::InvalidLimits => RiskRejectReason::InvalidLimits,
         });
     }
     if !snapshot.enabled {
-        return RiskDecision::Reject("trading_disabled");
+        return RiskDecision::Reject(RiskRejectReason::TradingDisabled);
     }
     if !snapshot.book_fresh {
-        return RiskDecision::Reject("stale_market_data");
+        return RiskDecision::Reject(RiskRejectReason::StaleMarketData);
     }
     if !snapshot.book_tradable {
-        return RiskDecision::Reject("untradable_book");
+        return RiskDecision::Reject(RiskRejectReason::UntradableBook);
     }
     let order_cap = intent.qty.get().min(snapshot.max_order_lots);
     let position_cap = match intent.side {
@@ -106,7 +135,7 @@ pub fn check(intent: OrderIntent, snapshot: RiskSnapshot) -> RiskDecision {
     let allowed = order_cap.min(position_cap);
 
     if allowed <= 0 {
-        RiskDecision::Reject("position_limit")
+        RiskDecision::Reject(RiskRejectReason::PositionLimit)
     } else if allowed < intent.qty.get() {
         RiskDecision::Resize {
             max_qty_lots: allowed,

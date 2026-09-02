@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fill_model: FillModel::L2Queue,
     };
     let mut venue = SimulatedVenue::new(config, "SIM", "paper", "BTC-USD");
-    let first_id = ClientOrderId::new("book-demo-1");
+    let first_id = ClientOrderId::new("book-demo-1")?;
     venue.submit(
         SimOrderRequest {
             client_order_id: first_id.clone(),
@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     first_order = apply_report(first_order, &mut ledger, &fill_report.report)?;
     println!(
         "00:02 fill-before-ack -> OMS {:?}, position={}, equity={}",
-        first_order.status,
+        first_order.status(),
         ledger.snapshot().position_lots,
         ledger.equity_quote(price(10_000))?
     );
@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(ledger.apply_fill(first_fill)?, ApplyOutcome::Duplicate);
     println!(
         "00:03 late new-ack + duplicate fill -> OMS {:?}, executions={}",
-        first_order.status,
+        first_order.status(),
         ledger.snapshot().execution_count
     );
 
@@ -157,7 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         bids: vec![(price(10_000), 5)],
         asks: vec![(price(10_002), 5)],
     })?;
-    let cancel_id = ClientOrderId::new("book-demo-cancel");
+    let cancel_id = ClientOrderId::new("book-demo-cancel")?;
     venue.submit(
         SimOrderRequest {
             client_order_id: cancel_id.clone(),
@@ -177,7 +177,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let before_reconciliation = venue.reconcile(&cancel_id, 2_040)?;
     println!(
         "00:05 cancel timeout -> OMS {:?}, venue {:?}",
-        cancel_order.status, before_reconciliation.status
+        cancel_order.status(),
+        before_reconciliation.status
     );
 
     let cancel_ack = venue.drain_reports(2_070).remove(0);
@@ -185,7 +186,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let reconciled = venue.reconcile(&cancel_id, 2_070)?;
     println!(
         "00:06 reconciliation -> OMS {:?}, venue {:?}",
-        cancel_order.status, reconciled.status
+        cancel_order.status(),
+        reconciled.status
     );
 
     let mut replay = Replay::default();

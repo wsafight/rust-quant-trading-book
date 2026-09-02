@@ -4,6 +4,7 @@ use std::fmt;
 pub enum DomainError {
     NonPositivePrice,
     NonPositiveQuantity,
+    EmptyClientOrderId,
 }
 
 impl fmt::Display for DomainError {
@@ -11,6 +12,9 @@ impl fmt::Display for DomainError {
         match self {
             Self::NonPositivePrice => f.write_str("price ticks must be positive"),
             Self::NonPositiveQuantity => f.write_str("quantity lots must be positive"),
+            Self::EmptyClientOrderId => {
+                f.write_str("client order id cannot be empty or whitespace-only")
+            }
         }
     }
 }
@@ -57,8 +61,11 @@ pub enum Side {
 pub struct ClientOrderId(String);
 
 impl ClientOrderId {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+    pub fn new(value: impl Into<String>) -> Result<Self, DomainError> {
+        let value = value.into();
+        (!value.trim().is_empty())
+            .then_some(Self(value))
+            .ok_or(DomainError::EmptyClientOrderId)
     }
 
     pub fn as_str(&self) -> &str {
@@ -93,5 +100,13 @@ mod tests {
     fn rejects_invalid_units() {
         assert_eq!(PriceTicks::new(0), Err(DomainError::NonPositivePrice));
         assert_eq!(QtyLots::new(-1), Err(DomainError::NonPositiveQuantity));
+    }
+
+    #[test]
+    fn rejects_empty_client_order_ids() {
+        assert_eq!(
+            ClientOrderId::new("  \t"),
+            Err(DomainError::EmptyClientOrderId)
+        );
     }
 }

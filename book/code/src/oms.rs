@@ -24,10 +24,10 @@ impl OrderStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Order {
-    pub client_order_id: ClientOrderId,
-    pub total_qty: QtyLots,
-    pub filled_qty: i64,
-    pub status: OrderStatus,
+    client_order_id: ClientOrderId,
+    total_qty: QtyLots,
+    filled_qty: i64,
+    status: OrderStatus,
     executions: HashSet<ExecutionKey>,
 }
 
@@ -44,6 +44,22 @@ impl Order {
 
     pub fn has_execution(&self, key: &ExecutionKey) -> bool {
         self.executions.contains(key)
+    }
+
+    pub fn client_order_id(&self) -> &ClientOrderId {
+        &self.client_order_id
+    }
+
+    pub const fn total_qty(&self) -> QtyLots {
+        self.total_qty
+    }
+
+    pub const fn filled_qty(&self) -> i64 {
+        self.filled_qty
+    }
+
+    pub const fn status(&self) -> OrderStatus {
+        self.status
     }
 }
 
@@ -105,6 +121,8 @@ pub fn reduce(mut order: Order, event: OrderEvent) -> Result<Order, ReduceError>
             } else if previous_status == OrderStatus::Cancelled {
                 // Cancel ack and execution reports can arrive out of order.
                 OrderStatus::Cancelled
+            } else if previous_status == OrderStatus::PendingCancel {
+                OrderStatus::PendingCancel
             } else {
                 OrderStatus::PartiallyFilled
             };

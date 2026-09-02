@@ -3,3 +3,8 @@
 
 # Cargo build output for the runnable companion project
 /book/code/target/
+
+# Local editor and operating-system files
+.DS_Store
+*.swp
+.idea/

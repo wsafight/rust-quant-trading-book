@@ -2,7 +2,7 @@ use quant_engine::domain::{ClientOrderId, ExecutionKey, QtyLots};
 use quant_engine::oms::{Order, OrderEvent, OrderStatus, reduce};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let order = Order::pending(ClientOrderId::new("example-1"), QtyLots::new(10)?);
+    let order = Order::pending(ClientOrderId::new("example-1")?, QtyLots::new(10)?);
     let order = reduce(
         order,
         OrderEvent::Fill {
@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let order = reduce(order, OrderEvent::NewAck)?;
 
-    assert_eq!(order.status, OrderStatus::Filled);
-    assert_eq!(order.filled_qty, 10);
+    assert_eq!(order.status(), OrderStatus::Filled);
+    assert_eq!(order.filled_qty(), 10);
     Ok(())
 }

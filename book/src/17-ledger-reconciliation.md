@@ -109,7 +109,7 @@ equity change         = 28 + 27 - 3 = 52
 
 ## 17.7 可运行实现
 
-下面的代码来自 Cargo example，不是与实现分离的正文副本：
+完整账本实现位于 `book/code/src/ledger.rs`。下面的代码来自 Cargo example，不是与实现分离的正文副本：
 
 ~~~rust,ignore
 {{#include ../code/examples/ledger_round_trip.rs}}

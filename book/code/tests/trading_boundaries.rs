@@ -1,7 +1,7 @@
 use quant_engine::domain::{ClientOrderId, ExecutionKey, PriceTicks, QtyLots, Side};
 use quant_engine::oms::{Order, OrderEvent, OrderStatus, ReduceError, reduce};
 use quant_engine::order_book::{BookError, Delta, OrderBook, Snapshot};
-use quant_engine::risk::{OrderIntent, RiskDecision, RiskSnapshot, check};
+use quant_engine::risk::{OrderIntent, RiskDecision, RiskRejectReason, RiskSnapshot, check};
 
 fn price(value: i64) -> PriceTicks {
     PriceTicks::new(value).unwrap()
@@ -11,8 +11,12 @@ fn qty(value: i64) -> QtyLots {
     QtyLots::new(value).unwrap()
 }
 
+fn client_order_id(value: &str) -> ClientOrderId {
+    ClientOrderId::new(value).unwrap()
+}
+
 fn order() -> Order {
-    Order::pending(ClientOrderId::new("test-order-1"), qty(10))
+    Order::pending(client_order_id("test-order-1"), qty(10))
 }
 
 fn execution(id: &str) -> ExecutionKey {
@@ -109,11 +113,11 @@ fn fill_before_ack_is_absorbed_without_state_regression() {
         },
     )
     .unwrap();
-    assert_eq!(order.status, OrderStatus::Filled);
+    assert_eq!(order.status(), OrderStatus::Filled);
 
     let order = reduce(order, OrderEvent::NewAck).unwrap();
-    assert_eq!(order.status, OrderStatus::Filled);
-    assert_eq!(order.filled_qty, 10);
+    assert_eq!(order.status(), OrderStatus::Filled);
+    assert_eq!(order.filled_qty(), 10);
 }
 
 #[test]
@@ -129,13 +133,13 @@ fn duplicate_fill_changes_accounting_once() {
     .unwrap();
     let order = reduce(order, OrderEvent::Fill { key, qty: qty(4) }).unwrap();
 
-    assert_eq!(order.filled_qty, 4);
-    assert_eq!(order.status, OrderStatus::PartiallyFilled);
+    assert_eq!(order.filled_qty(), 4);
+    assert_eq!(order.status(), OrderStatus::PartiallyFilled);
 }
 
 #[test]
 fn extreme_fill_quantity_cannot_hide_an_overfill() {
-    let order = Order::pending(ClientOrderId::new("large-order"), qty(i64::MAX));
+    let order = Order::pending(client_order_id("large-order"), qty(i64::MAX));
     let order = reduce(
         order,
         OrderEvent::Fill {
@@ -163,21 +167,21 @@ fn extreme_fill_quantity_cannot_hide_an_overfill() {
 #[test]
 fn timeout_marks_nonterminal_order_uncertain() {
     let order = reduce(order(), OrderEvent::Timeout).unwrap();
-    assert_eq!(order.status, OrderStatus::Uncertain);
+    assert_eq!(order.status(), OrderStatus::Uncertain);
 }
 
 #[test]
 fn late_ack_resolves_an_uncertain_order() {
     let order = reduce(order(), OrderEvent::Timeout).unwrap();
     let order = reduce(order, OrderEvent::NewAck).unwrap();
-    assert_eq!(order.status, OrderStatus::Open);
+    assert_eq!(order.status(), OrderStatus::Open);
 }
 
 #[test]
 fn explicit_reject_resolves_an_unfilled_uncertain_order() {
     let order = reduce(order(), OrderEvent::Timeout).unwrap();
     let order = reduce(order, OrderEvent::Reject).unwrap();
-    assert_eq!(order.status, OrderStatus::Rejected);
+    assert_eq!(order.status(), OrderStatus::Rejected);
 }
 
 #[test]
@@ -193,8 +197,28 @@ fn late_cancel_ack_does_not_regress_a_filled_order() {
     )
     .unwrap();
     let order = reduce(order, OrderEvent::CancelAck).unwrap();
-    assert_eq!(order.status, OrderStatus::Filled);
-    assert_eq!(order.filled_qty, 10);
+    assert_eq!(order.status(), OrderStatus::Filled);
+    assert_eq!(order.filled_qty(), 10);
+}
+
+#[test]
+fn pending_cancel_partial_fill_keeps_pending_cancel() {
+    let order = reduce(order(), OrderEvent::NewAck).unwrap();
+    let order = reduce(order, OrderEvent::CancelRequested).unwrap();
+    let order = reduce(
+        order,
+        OrderEvent::Fill {
+            key: execution("fill-partial"),
+            qty: qty(4),
+        },
+    )
+    .unwrap();
+    assert_eq!(order.status(), OrderStatus::PendingCancel);
+    assert_eq!(order.filled_qty(), 4);
+
+    let order = reduce(order, OrderEvent::CancelAck).unwrap();
+    assert_eq!(order.status(), OrderStatus::Cancelled);
+    assert_eq!(order.filled_qty(), 4);
 }
 
 #[test]
@@ -210,8 +234,26 @@ fn fill_reported_after_cancel_ack_is_still_accounted() {
         },
     )
     .unwrap();
-    assert_eq!(order.status, OrderStatus::Cancelled);
-    assert_eq!(order.filled_qty, 4);
+    assert_eq!(order.status(), OrderStatus::Cancelled);
+    assert_eq!(order.filled_qty(), 4);
+}
+
+#[test]
+fn cancelled_late_fill_that_completes_order_becomes_filled() {
+    let order = reduce(order(), OrderEvent::NewAck).unwrap();
+    let order = reduce(order, OrderEvent::CancelRequested).unwrap();
+    let order = reduce(order, OrderEvent::CancelAck).unwrap();
+    let order = reduce(
+        order,
+        OrderEvent::Fill {
+            key: execution("late-final-fill"),
+            qty: qty(10),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(order.status(), OrderStatus::Filled);
+    assert_eq!(order.filled_qty(), 10);
 }
 
 #[test]
@@ -259,7 +301,18 @@ fn stale_market_data_blocks_orders() {
             max_order_lots: 5,
         },
     );
-    assert_eq!(decision, RiskDecision::Reject("stale_market_data"));
+    assert_eq!(
+        decision,
+        RiskDecision::Reject(RiskRejectReason::StaleMarketData)
+    );
+    assert_eq!(
+        RiskRejectReason::StaleMarketData.as_str(),
+        "stale_market_data"
+    );
+    assert_eq!(
+        RiskRejectReason::StaleMarketData.to_string(),
+        "stale_market_data"
+    );
 }
 
 #[test]
@@ -283,7 +336,10 @@ fn invalid_open_exposure_fails_closed() {
             max_order_lots: 5,
         },
     );
-    assert_eq!(decision, RiskDecision::Reject("invalid_exposure"));
+    assert_eq!(
+        decision,
+        RiskDecision::Reject(RiskRejectReason::InvalidExposure)
+    );
 }
 
 #[test]
@@ -307,5 +363,8 @@ fn untradable_book_blocks_increasing_risk() {
             max_order_lots: 5,
         },
     );
-    assert_eq!(decision, RiskDecision::Reject("untradable_book"));
+    assert_eq!(
+        decision,
+        RiskDecision::Reject(RiskRejectReason::UntradableBook)
+    );
 }

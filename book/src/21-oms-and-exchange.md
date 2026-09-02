@@ -61,6 +61,8 @@ strategy_decision_id
 
 *-1：timeout 不证明订单失败；`Uncertain` 会限制新增风险，直到 query 或私有事件让事实收敛。*
 
+图中省略不改变状态的自环：`PendingCancel` 期间收到部分成交时只累计成交量，订单仍是 `PendingCancel`；final fill 才进入 `Filled`。
+
 ```rust,ignore
 {{#include ../code/src/oms.rs:order_model}}
 ```
@@ -83,7 +85,7 @@ fill-before-ack 的可运行调用示例直接来自 Cargo example：
 
 - cumulative filled qty 单调不减，且不超过订单总量。
 - 同一 execution key 只改变一次仓位和现金。
-- terminal state 不被旧事件回退。
+- `Filled` 不被迟到 ack/timeout 回退；`Cancelled` 仍吸收迟到 execution，累计成交达到总量时以权威成交事实收敛为 `Filled`。
 - cancel requested 不是 terminal，期间允许 fill。
 - fill-before-ack 可以被吸收。
 - 非法转移、未知订单和 overfill 不静默丢弃，进入审计和对账。
@@ -108,6 +110,8 @@ send/response timeout 后：
 5. 超过时限后 risk-off 并升级。
 
 “请求失败”只有在得到明确、可信的拒绝时才能成为订单不存在的证据。
+
+配套 reducer 用一个 `Uncertain` 变体保持示例最小化，因此不会记录 timeout 前处于 `PendingNew` 还是 `PendingCancel`。生产实现应另外持久化 pending action/前序阶段；否则部分成交虽然证明订单存在，却不能单独回答撤单是否仍在途。
 
 ## 21.6 先落盘，后发送
 

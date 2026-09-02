@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut venue = SimulatedVenue::new(config, "SIM", "paper", "BTC-USD");
     venue.submit(
         SimOrderRequest {
-            client_order_id: ClientOrderId::new("example-1"),
+            client_order_id: ClientOrderId::new("example-1")?,
             side: Side::Buy,
             price: PriceTicks::new(100)?,
             qty: QtyLots::new(2)?,

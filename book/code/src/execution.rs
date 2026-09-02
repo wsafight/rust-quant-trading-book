@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn pending_cancel_still_consumes_parent_capacity() {
         let mut parent = ParentExecution::new(Side::Buy, qty(10));
-        let maker = ClientOrderId::new("maker-1");
+        let maker = ClientOrderId::new("maker-1").unwrap();
         parent.register_child(maker.clone(), qty(4)).unwrap();
         parent.apply_confirmed_fill(&maker, qty(1)).unwrap();
         parent.request_cancel(&maker).unwrap();
@@ -228,7 +228,7 @@ mod tests {
         assert_eq!(parent.open_risk_lots(), 3);
         assert_eq!(parent.new_child_capacity_lots(), 6);
         assert_eq!(
-            parent.register_child(ClientOrderId::new("taker-too-large"), qty(9)),
+            parent.register_child(ClientOrderId::new("taker-too-large").unwrap(), qty(9)),
             Err(ExecutionError::ChildExceedsRemaining {
                 requested: 9,
                 available: 6,

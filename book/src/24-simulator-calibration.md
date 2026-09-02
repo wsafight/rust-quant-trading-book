@@ -4,6 +4,8 @@
 
 > **学习导航**　前置：第 13、14、18、21、23 章的 queue、parent/child、行情时间、OMS 与事件回放｜目标：实现可替换成交模型并用未见数据校准偏差｜预计：14–20 小时｜产出：三层 fill model、latency 参数包、校准/验证报告和模型拒绝条件
 
+配套模拟器的完整实现位于 `book/code/src/simulator.rs`。当前教学基线为支持终态后的 `reconcile` 并阻止 `ClientOrderId` 静默复用，会保留终态订单；百万事件回放需要把 active order、有限期 terminal truth cache 与已用 ID registry 分开，不能在 fill 或 cancel 生效后直接删除全部事实。
+
 ## 24.1 模拟器的权限边界
 
 模拟器可以维护虚拟 venue truth，但不能直接写策略仓位：

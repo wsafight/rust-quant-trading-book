@@ -25,7 +25,7 @@ fn run_fill_before_ack() -> (OrderStatus, u64) {
         fill_model: FillModel::L2Queue,
     };
     let mut venue = SimulatedVenue::new(config, "SIM", "paper", "BTC-USD");
-    let id = ClientOrderId::new("loop-order-1");
+    let id = ClientOrderId::new("loop-order-1").unwrap();
     venue
         .submit(
             SimOrderRequest {
@@ -72,7 +72,7 @@ fn run_fill_before_ack() -> (OrderStatus, u64) {
     assert_eq!(ledger.snapshot().position_lots, 2);
     assert_eq!(ledger.snapshot().execution_count, 1);
     assert!(ledger.verify_equity_identity(price(10_000)).unwrap());
-    (order.status, ledger.state_checksum())
+    (order.status(), ledger.state_checksum())
 }
 
 #[test]
