@@ -1,6 +1,6 @@
 # 阶段检查点四：交易闭环与硬风控
 
-这个检查点覆盖第 17 至 20 章。你需要让行情、adapter、OMS、策略和硬风控形成离线闭环，并证明乱序、重复、超时和重启不会绕过风险限制。
+这个检查点覆盖第 18 至 22 章。你需要让行情、adapter、OMS、策略和硬风控形成离线闭环，并证明乱序、重复、超时和重启不会绕过风险限制。
 
 ## 前置条件
 
@@ -41,5 +41,4 @@ private disconnect -> fill -> restart -> reconcile
 - 六类核心故障测试与重启前后 checksum。
 - 审计记录能从 client ID 追到 intent、send attempt、venue event、position 和 PnL。
 
-若 timeout 被写成 `Rejected`，回到第 10、18、19 章；若策略配置能修改 hard limit，回到第 20 章。
-
+若 timeout 被写成 `Rejected`，回到第 10、19、21 章；若 fixture 无法证明 adapter 规则，回到第 20 章；若策略配置能修改 hard limit，回到第 22 章。

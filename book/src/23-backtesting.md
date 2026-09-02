@@ -1,10 +1,10 @@
-# 第 21 章 数据、回测与仿真
+# 第 23 章 数据、回测与仿真
 
 回测不是把历史价格喂给策略。交易系统在当时只能看到延迟、不完整且有协议顺序的数据；订单还要经历发送、接受、排队、部分成交、撤单和成交回报。忽略这些步骤，漂亮收益通常只是成交模型的产物。
 
 > **学习导航**　前置：通过检查点四，拥有可复用 book/OMS/risk/accounting｜目标：构建 point-in-time、事件驱动且可确定复现的交易仿真｜预计：18–24 小时｜产出：回放调度器、三层 fill model、成本敏感性和对账报告
 
-## 21.1 研究假设先行
+## 23.1 研究假设先行
 
 开始写代码前定义：
 
@@ -18,7 +18,7 @@
 
 先写假设能减少“看完结果再发明故事”的自由度。
 
-## 21.2 数据层次与 lineage
+## 23.2 数据层次与 lineage
 
 至少保留三层：
 
@@ -36,7 +36,7 @@ raw payload -> normalized event -> derived feature/label
 - fee tier、borrow、transfer 和结算记录。
 - 本地 receive/process 时间、连接状态和延迟。
 
-## 21.3 Point-in-time 语义
+## 23.3 Point-in-time 语义
 
 策略在时刻 `t` 只能使用 `t` 之前已经到达本地的数据。常见前视错误：
 
@@ -83,7 +83,7 @@ let mut replay = Replay::default();
 replay.schedule(event.at_ns, event.priority, event.local_sequence, event)?;
 ```
 
-## 21.4 Live 与 Replay 共用领域逻辑
+## 23.4 Live 与 Replay 共用领域逻辑
 
 理想结构：
 
@@ -99,7 +99,7 @@ Replay source --/                                      |
 
 相同输入、配置和 seed 必须得到相同 intents、simulated fills、position 和 PnL。随机模型的 seed 与抽样算法版本也是实验输入。
 
-## 21.5 模拟交易所，而不是直接改仓位
+## 23.5 模拟交易所，而不是直接改仓位
 
 策略调用 `cancel()` 时，模拟订单不能立刻消失。订单应经历：
 
@@ -111,7 +111,7 @@ intent -> send latency -> accept/reject -> queue
 
 模拟事件仍通过同一个 OMS reducer 和账本。这样 cancel/fill race、duplicate 和 uncertain 场景可以在线下重放。
 
-## 21.6 成交模型层级
+## 23.6 成交模型层级
 
 | 模型 | 规则 | 主要偏差 |
 | --- | --- | --- |
@@ -123,7 +123,7 @@ intent -> send latency -> accept/reject -> queue
 
 至少使用乐观、中性、悲观参数包。若策略只有 touch fill 盈利，结论通常不足以进入 canary。
 
-## 21.7 L2 Queue 模型
+## 23.7 L2 Queue 模型
 
 挂单到达时估计 `queue_ahead`，同价可见深度减少时决定多少归因于前方成交/撤单。三种边界：
 
@@ -133,7 +133,31 @@ intent -> send latency -> accept/reject -> queue
 
 结果需要对 queue 假设做敏感性。小额 canary 的真实 fill/markout 可以校准模型，但不要用同一时期校准又报告最终效果。
 
-## 21.8 延迟模型
+### 配套模拟器的可验证边界
+
+`book/code/src/simulator.rs` 提供三种确定性教学模型：
+
+- `Touch`：对手最优价触及 limit 即全部成交，是明确的乐观上界。
+- `TradeThrough`：只有带正确 aggressor side 的成交价严格穿过 limit 才全部成交。
+- `L2Queue`：同价 trade 先消耗 `queue_ahead_lots`，剩余数量才成交；穿价则成交全部剩余量。
+
+订单先经历 send latency 才能参与市场事件，new ack 和 fill report 使用不同延迟，所以 fill 可以早于 ack 到达 OMS。cancel request 也只在 cancel latency 后生效；在途期间发生的成交仍会报告。模拟器只产生 venue report，不能直接修改 OMS 或账本。
+
+下面这个例子由 Cargo 作为独立 example 编译，固定证明成交报告早于 new ack：
+
+```rust,ignore
+{{#include ../code/examples/simulator_fill_before_ack.rs}}
+```
+
+运行跨模块测试：
+
+```bash
+cargo test --locked --manifest-path book/code/Cargo.toml --test offline_trading_loop
+```
+
+这个基线没有把 L2 不可识别部分伪装成事实：它不推断撤单来自队列前方还是后方，也不模拟隐藏单、自成交保护和真实撮合优先级。扩展时应新增 policy 和参数包，而不是修改历史结果最有利的默认规则。
+
+## 23.8 延迟模型
 
 至少拆分：
 
@@ -145,7 +169,7 @@ intent -> send latency -> accept/reject -> queue
 
 延迟可以来自实测经验分布，不应只填一个平均常数。做 1x、2x、5x、10x 情景，观察 stale fill、markout、库存尾部和优势消失点。
 
-## 21.9 成本随事件变化
+## 23.9 成本随事件变化
 
 每笔事件计算：
 
@@ -158,7 +182,7 @@ intent -> send latency -> accept/reject -> queue
 
 不要最后统一扣一个平均百分比。策略改变订单类型、频率和持仓路径时，成本也会改变。
 
-## 21.10 市场冲击与容量
+## 23.10 市场冲击与容量
 
 小额 maker 可以先忽略对 mid 的直接影响，但不能忽略自己的 queue footprint。主动或规模较大的策略需要 depth walk、participation rate、temporary/permanent impact 情景。
 
@@ -170,7 +194,7 @@ intent -> send latency -> accept/reject -> queue
 - margin、fee tier 和 venue concentration。
 - 策略对市场状态的反馈。
 
-## 21.11 PnL 账本先于归因
+## 23.11 PnL 账本先于归因
 
 模拟 fill ledger、position ledger 和 cash ledger 应日内/日终对账。先验证：
 
@@ -182,7 +206,7 @@ equity change = external cash flow
 
 再报告 spread capture、signed markout、inventory revaluation、hedge slippage 和 attribution residual。回测“盈利”但账本不闭合，是实现错误而不是小统计问题。
 
-## 21.12 防止过拟合
+## 23.12 防止过拟合
 
 - 按时间顺序 train/validation/test，保留最终 holdout。
 - walk-forward 只用过去数据重新估计。
@@ -194,7 +218,7 @@ equity change = external cash flow
 
 Sharpe 不是完整答案。还要看样本长度、非平稳、偏度/尾部、turnover、drawdown、容量与成本误差。
 
-## 21.13 从离线到生产
+## 23.13 从离线到生产
 
 1. **Offline replay**：验证逻辑、偏差和故障事件。
 2. **Shadow**：消费生产行情、生成意图但不发单，检查实时性和稳定性。
@@ -204,7 +228,7 @@ Sharpe 不是完整答案。还要看样本长度、非平稳、偏度/尾部、
 
 仿真与 canary 差异反馈给模型，不能修改实盘报表来隐藏。
 
-## 21.14 研究报告最低结构
+## 23.14 研究报告最低结构
 
 - Executive summary：结论、证据强度、是否继续。
 - Hypothesis and mechanism。
@@ -215,7 +239,7 @@ Sharpe 不是完整答案。还要看样本长度、非平稳、偏度/尾部、
 - Risks、failure conditions 与不可识别部分。
 - Shadow/canary 校准计划。
 
-## 21.15 事件调度器的确定性
+## 23.15 事件调度器的确定性
 
 replay 不应简单遍历行情文件，因为策略产生的内部事件也有时间：订单到达 venue、cancel 生效、funding 结算、timer 和 fill report 都要与市场事件竞争。
 
@@ -231,7 +255,7 @@ replay 不应简单遍历行情文件，因为策略产生的内部事件也有�
 
 ![确定性回放事件时间线](assets/replay-timeline.svg)
 
-*图 21-1：ack 可以晚于影响 queue 的市场事件；模拟器不能按代码调用顺序直接修改订单或仓位。*
+*-1：ack 可以晚于影响 queue 的市场事件；模拟器不能按代码调用顺序直接修改订单或仓位。*
 
 回测过拟合、Sharpe 统计和时间序列研究资料见[附录 E](appendix-e-references.md)；引用模型不等于已经满足 point-in-time 与成交校准要求。
 
@@ -239,7 +263,7 @@ replay 不应简单遍历行情文件，因为策略产生的内部事件也有�
 
 同一 timestamp 的 tie-breaker 必须明确。例如 venue market event 先于本地 timer，还是按录制 local sequence；任何选择都可能影响边界 fill，应在报告中说明并做敏感性。
 
-## 21.16 Queue 模型如何校准
+## 23.16 Queue 模型如何校准
 
 从小额 canary 收集：下单确认时可见同价 depth、quote age、期间 trade volume、depth depletion、真实 fill time/qty 和后续 markout。然后比较模拟与真实的条件分布：
 
@@ -251,7 +275,7 @@ replay 不应简单遍历行情文件，因为策略产生的内部事件也有�
 
 不要只调一个参数让总 fill count 一致。模型可能在平静期过度成交、极端期不足成交，恰好在总数上抵消。校准和最终验证使用不同时间段，并保留旧模型结果，防止每次实盘偏差都通过追数据参数“解释掉”。
 
-## 21.17 统计显著不等于可交易
+## 23.17 统计显著不等于可交易
 
 一个 signal 在百万条事件上得到很小 p-value，经济效果可能只有 0.2 bps，而费用与模型误差是 5 bps。反过来，少量极端窗口贡献大部分 PnL，普通标准误也可能低估尾部不确定性。
 
@@ -266,7 +290,7 @@ replay 不应简单遍历行情文件，因为策略产生的内部事件也有�
 
 微观结构事件高度自相关，随机打散 train/test 会泄漏相邻市场状态。使用按时间块切分、walk-forward、必要的 purge/embargo，并把最后一段 holdout 留到研究决策基本冻结后。
 
-## 21.18 模拟与实盘偏差表
+## 23.18 模拟与实盘偏差表
 
 每次 shadow/canary 后维护差异，而不是只比较总 PnL：
 
@@ -280,9 +304,9 @@ replay 不应简单遍历行情文件，因为策略产生的内部事件也有�
 
 模型版本变更要解释哪个偏差被修正，以及在未见 holdout 上是否改善。模拟永远不会变成实盘本身；目标是让重要偏差可测、有边界并进入风险限制。
 
-## 21.19 必做实验
+## 23.19 必做实验
 
-1. 同一策略分别运行 touch、trade-through 和三组 L2 queue 模型。
+1. 使用配套 simulator 让同一订单分别运行 touch、trade-through 和三组 L2 queue 参数，比较 fill 与 position。
 2. 将 send/cancel latency 扩大 2、5、10 倍。
 3. 改变 maker/taker fee 与对冲频率，判断收益是否依赖 rebate。
 4. 在断线窗口禁止交易，与错误 forward-fill 结果比较。

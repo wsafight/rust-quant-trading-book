@@ -4,8 +4,8 @@
 
 | 项目 | 当前记录 |
 | --- | --- |
-| 书稿版本 | `0.2.2` |
-| 书稿最近复核 | 2026-08-27 |
+| 书稿版本 | `0.3.0` |
+| 书稿最近复核 | 2026-09-02 |
 | 配套工程 MSRV | Rust `1.85`（Rust 2024 edition） |
 | 本次完整测试 | `rustc 1.98.0`、`cargo 1.98.0` |
 | 文档构建 | mdBook `0.5.2` |
@@ -35,6 +35,16 @@ MSRV 表示配套 Cargo 工程声明的最低 Rust 版本，不等于每一个�
 
 ## 变更记录
 
+### 0.3.0 · 2026-09-02
+
+- 新增可运行 average-cost ledger，覆盖 execution 幂等/冲突、部分平仓、反手、fee、稳定 checksum 与 equity identity。
+- 新增确定性 simulated venue，覆盖 send/cancel/report latency、touch、trade-through、L2 queue 和 fill-before-ack。
+- 新增 parent/child execution 容量模型和 BH/FDR 研究工具，并以 Cargo examples 供正文直接引用。
+- 新增账本与对账、venue contract fixture、模拟交易所校准三章，后半部分顺延为全书 28 章。
+- 新增严格 JSON/decimal venue fixture decoder 和冻结的 synthetic Binance Spot schema 样本。
+- 将一键 demo 扩展为订单簿、硬风控、模拟 venue、OMS、账本与 replay 的故障时间线，并增加跨模块重复回放测试。
+- 扩写执行、账务、回测与统计章节，明确当前教学基线和第 27 章剩余边界。
+
 ### 0.2.2 · 2026-08-27
 
 - 修正 implementation shortfall 的重复计成本风险和 post-only 示例的盘口方向。
@@ -47,7 +57,7 @@ MSRV 表示配套 Cargo 工程声明的最低 Rust 版本，不等于每一个�
 - 固定 Rust `1.98.0` 与 mdBook `0.5.2` 检查基线，Cargo 检查统一使用 lockfile。
 - 修复 replay 插入顺序依赖、未来时间 freshness、PnL/成交量极值溢出和非法风险快照放行。
 - 区分订单簿结构有效、新鲜与可交易状态，并补齐 `PartiallyFilled` 正文、实现和状态图语义。
-- 明确奇数 tick spread 的半 tick mid，以及 companion 工程当前实现与第 24 章目标结构的边界。
+- 明确奇数 tick spread 的半 tick mid，以及 companion 工程当前实现与第 27 章目标结构的边界。
 - 删除已完成内容迁移的原始 `docs/` 资料目录，正式书稿继续以 `book/src` 为唯一内容来源。
 
 ### 0.2.0 · 2026-08-26

@@ -1,6 +1,7 @@
 use crate::domain::{PriceTicks, QtyLots, Side};
 use std::fmt;
 
+// ANCHOR: risk_model
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OrderIntent {
     pub side: Side,
@@ -65,7 +66,9 @@ pub enum RiskDecision {
     Resize { max_qty_lots: i64 },
     Reject(&'static str),
 }
+// ANCHOR_END: risk_model
 
+// ANCHOR: risk_check
 pub fn worst_long(snapshot: RiskSnapshot) -> i128 {
     i128::from(snapshot.position_lots)
         + i128::from(snapshot.active_buy_lots)
@@ -112,3 +115,4 @@ pub fn check(intent: OrderIntent, snapshot: RiskSnapshot) -> RiskDecision {
         RiskDecision::Allow
     }
 }
+// ANCHOR_END: risk_check

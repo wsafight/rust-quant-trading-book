@@ -1,10 +1,10 @@
-# 第 17 章 行情、时钟与本地订单簿
+# 第 18 章 行情、时钟与本地订单簿
 
 行情系统的产物不是一个价格，而是一份带来源、序列、时间和可信状态的市场视图。数值看起来合理，不代表它仍然新鲜或来自完整事件链。
 
 > **学习导航**　前置：通过检查点三，并掌握第 9–12 章实时链路｜目标：构建可审计 recorder、同步器、时钟和本地订单簿｜预计：14–20 小时｜产出：公开行情 fixture、百万事件 replay、延迟报告和 gap 演练
 
-## 17.1 Gateway 的边界
+## 18.1 Gateway 的边界
 
 建议把公开行情接入拆成：
 
@@ -21,11 +21,11 @@ Transport -> wire decoder -> venue synchronizer -> normalizer
 
 ![行情数据流水线](assets/market-data-pipeline.svg)
 
-*图 17-1：raw recorder 与交易路径并行保留事实；任何同步不变量失败都走 invalid 分支。*
+*-1：raw recorder 与交易路径并行保留事实；任何同步不变量失败都走 invalid 分支。*
 
 不要把重连、解析、同步和策略计算放进一个巨大的 async loop。分层让 fixture、故障注入和状态指标更容易验证。
 
-## 17.2 保存原始事实
+## 18.2 保存原始事实
 
 normalized 数据便于研究，但不能替代原始 payload。adapter 逻辑升级后，原始数据允许重新解析，也能证明交易所当时发了什么。
 
@@ -40,7 +40,7 @@ schema_version, recorder_version, checksum
 
 原始文件采用 append-only framing；记录长度与 checksum 可以检测半截尾部。长期存储可以压缩和分冷热层，但不能静默丢掉 schema/version。
 
-## 17.3 四种时间与一个序列
+## 18.3 四种时间与一个序列
 
 - `exchange_event_time`：交易所定义的事件时间。
 - `local_receive_time`：本机收到完整消息或 packet 的时间。
@@ -50,7 +50,7 @@ schema_version, recorder_version, checksum
 
 研究使用当时本地可见状态，不能按 exchange timestamp 全局重新排序后假装系统当时知道该顺序。跨 venue lead-lag 尤其容易被时钟误差、线路差异和共同数据源伪造。
 
-## 17.4 连接状态不是布尔值
+## 18.4 连接状态不是布尔值
 
 ```text
 Disconnected -> Connecting -> Subscribing -> Synchronizing
@@ -85,11 +85,11 @@ fn main() {
 }
 ```
 
-## 17.5 Snapshot + delta 的通用思路
+## 18.5 Snapshot + delta 的通用思路
 
 ![Snapshot 与 delta 同步状态](assets/snapshot-delta-sync.svg)
 
-*图 17-2：重连只恢复 transport；找到覆盖 `S+1` 的桥接增量并连续应用后，book 才重新 valid。*
+*-2：重连只恢复 transport；找到覆盖 `S+1` 的桥接增量并连续应用后，book 才重新 valid。*
 
 各 venue 细节不同，但调查时可使用以下框架：
 
@@ -103,7 +103,7 @@ fn main() {
 
 有些 venue 要先快照再订阅，有些提供 update ID 区间，有些要求 previous sequence；通用步骤不能替代官方算法。
 
-## 17.6 显式 Book 状态机
+## 18.6 显式 Book 状态机
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,7 +143,7 @@ fn main() {
 
 重复事件是否可忽略取决于协议和更新幂等性。示例只表现“旧序列不回退”，真实实现需用 fixture 证明。
 
-## 17.7 一次更新要原子验证
+## 18.7 一次更新要原子验证
 
 应用 delta 的安全顺序：
 
@@ -155,7 +155,7 @@ fn main() {
 
 如果某项失败，策略必须看见 invalid 状态，而不是继续使用上一次 mid。可以保留旧数据用于诊断，但不能把它标成新鲜行情。
 
-## 17.8 Freshness 不是固定常数
+## 18.8 Freshness 不是固定常数
 
 行情年龄应基于本地 receive/process 时间与当前 monotonic time。阈值取决于：
 
@@ -167,7 +167,7 @@ fn main() {
 
 因此可以使用分级动作：轻微变旧时 widen/resize，超过硬阈值时禁止增险并撤单。硬风险门槛仍需有明确上限，不能完全交给策略。
 
-## 17.9 重连与重同步不同
+## 18.9 重连与重同步不同
 
 重连后要依次完成：
 
@@ -178,7 +178,7 @@ socket connected -> subscribed -> snapshot/delta aligned
 
 重连策略使用 exponential backoff + jitter，限制并行连接与订阅速率，避免重连风暴触发封禁。新连接不得沿用旧 book，除非协议明确证明连续。
 
-## 17.10 行情背压
+## 18.10 行情背压
 
 当 decoder 比 engine 快：
 
@@ -189,7 +189,7 @@ socket connected -> subscribed -> snapshot/delta aligned
 
 容量计算需要峰值消息率、处理能力、burst 时长和最大 age。还应使用录制的极端窗口做 2 倍或更高倍率回放。
 
-## 17.11 指标与告警
+## 18.11 指标与告警
 
 连接：
 
@@ -206,7 +206,7 @@ socket connected -> subscribed -> snapshot/delta aligned
 
 告警要结合状态。例如 market data age 超限且策略仍 enabled 应立即 page；策略已自动 risk-off 仍要告警，但严重度可按剩余暴露调整。
 
-## 17.12 确定性回放
+## 18.12 确定性回放
 
 recorder 输出应能直接输入离线 replay。同一原始事件与 adapter 版本必须生成相同 normalized events、book states 和 checksum。真实 wall clock、随机重连和网络不应渗入纯 book reducer。
 
@@ -219,7 +219,7 @@ recorder 输出应能直接输入离线 replay。同一原始事件与 adapter �
 - snapshot 获取慢于增量缓存容量。
 - TCP 活着但长时间无有效事件。
 
-## 17.13 Recorder 的存储设计
+## 18.13 Recorder 的存储设计
 
 最简单可审计的 recorder 可以使用分帧 append-only 文件：
 
@@ -238,7 +238,7 @@ record:
 
 敏感私有流与公开行情要分开存储和授权。原始订单/账户 payload 可能含账户标识，不应进入普通研究 bucket。日志只引用受控 object key 和 checksum，不复制完整敏感数据。
 
-## 17.14 重同步的实现细节
+## 18.14 重同步的实现细节
 
 同步器最好不直接修改当前 healthy book，而是在隔离的 candidate 上工作：
 
@@ -257,7 +257,7 @@ else:
 
 如果多 symbol 共用一个 WebSocket，单 symbol gap 是否要求重连整个连接取决于协议。设计时分开 connection health 与 per-channel/book health，避免一个产品异常不必要地停掉全部产品，也避免连接整体 sequence 损坏时只修一个 symbol。
 
-## 17.15 测量跨所延迟的陷阱
+## 18.15 测量跨所延迟的陷阱
 
 假设 A 的 exchange timestamp 比 B 早 3 ms，不能直接得出 A 领先 B。可能的时间线：
 
@@ -273,7 +273,7 @@ B 消息网络耗时 2 ms
 
 策略可执行的 lead-lag 不是“谁的 exchange time 更早”，而是“某信息在本地可见后，是否在完成计算和订单发送所需时间内，对另一 venue 的未来可成交价格仍有预测性”。这一定义自然包含部署位置和 send latency。
 
-## 17.16 行情异常调试手册
+## 18.16 行情异常调试手册
 
 看到 crossed book 或 checksum failure 时，按证据层次调查：
 
@@ -288,7 +288,7 @@ B 消息网络耗时 2 ms
 
 不要在未找到原因时简单把 `bid >= ask` 的档位删掉“修正”book。这会隐藏输入或同步错误，并产生从未在 venue 存在过的本地市场。
 
-## 17.17 本章交付
+## 18.17 本章交付
 
 实现一个公开行情 recorder 和 L2 reconstructor，连续运行并产出：
 

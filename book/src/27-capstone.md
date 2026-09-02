@@ -1,10 +1,10 @@
-# 第 24 章 贯穿项目：从行情到可审计 PnL
+# 第 27 章 贯穿项目：从行情到可审计 PnL
 
 贯穿项目的目标是交付一个离线可演示的 Rust 交易系统：读取录制的 L2 数据，重建订单簿，生成做市意图，经硬风控后进入模拟交易所，用 OMS 处理成交，最终对账仓位与 PnL。它不连接真实资金，也不声称策略盈利。
 
 > **学习导航**　前置：通过前五个阶段检查点｜目标：把行情、策略、hard risk、OMS、模拟交易所和账务连成可审计闭环｜预计：30–50 小时｜产出：一键离线 demo、完整测试、研究/性能报告和故障复盘
 
-## 24.1 为什么做一个闭环
+## 27.1 为什么做一个闭环
 
 三个互不相连的小 demo 很难证明边界是否一致。贯穿项目可以暴露真正的接口问题：
 
@@ -15,7 +15,7 @@
 - simulated exchange 是否经过真实订单状态机？
 - PnL 是否与现金、仓位、fee 和 funding 闭合？
 
-## 24.2 Workspace 结构
+## 27.2 Workspace 结构
 
 仓库中的 `book/code` 是已经可运行的单 package 起点，先用下面两条命令确认环境和核心边界：
 
@@ -24,7 +24,19 @@ cargo run --locked --manifest-path book/code/Cargo.toml --bin demo
 cargo test --locked --manifest-path book/code/Cargo.toml
 ```
 
-它提供领域类型、L2 book、OMS、hard risk、replay、Tokio 测试和 Criterion benchmark。下面的多 crate workspace 是完成本章后应逐步演化出的目标结构，不是仓库当前目录的虚假清单：
+它已经提供领域类型、L2 book、OMS、hard risk、average-cost ledger、三种成交模型、replay、Tokio 测试和 Criterion benchmark。`demo` 会串联 fill-before-ack、duplicate fill、sequence gap、cancel timeout、对账与权益闭合。
+
+当前能力边界如下：
+
+| 能力 | 当前基线 | 本章完整目标 |
+| --- | --- | --- |
+| 行情 | 内存 snapshot/delta 与 gap | raw fixture recorder、schema/version、百万事件 replay |
+| 订单 | OMS reducer 与 simulated report | durable intent、action executor、启动对账 |
+| 账本 | position/cash/fee、平均成本与 equity identity | funding、transfer、真实产品单位和持久化恢复 |
+| 仿真 | 固定延迟与三种 fill model | 参数分布、reject/rate-limit、校准报告 |
+| 策略/报告 | 固定教学 intent 与控制台时间线 | 双边报价、研究指标、结构化报告和 runbook |
+
+下面的多 crate workspace 是完成本章后可逐步演化出的目标结构，不是仓库当前目录的虚假清单：
 
 ```text
 quant-engine/
@@ -47,7 +59,7 @@ quant-engine/
 
 不要一开始拆成网络微服务。Cargo workspace 内的模块边界足以展示所有权和契约；完成正确基线后再根据部署与故障隔离需要拆进程。
 
-## 24.3 领域契约
+## 27.3 领域契约
 
 先写不可变约定：
 
@@ -61,7 +73,7 @@ quant-engine/
 
 所有 crate 依赖 `domain` 的类型，不各自发明单位和方向。
 
-## 24.4 里程碑一：行情与订单簿
+## 27.4 里程碑一：行情与订单簿
 
 实现：
 
@@ -80,7 +92,7 @@ quant-engine/
 
 演示命令应只使用仓库 fixture，不要求 API key。
 
-## 24.5 里程碑二：OMS 与账本
+## 27.5 里程碑二：OMS 与账本
 
 实现：
 
@@ -104,7 +116,9 @@ restart between send and ack persistence
 
 每条事件从原始输入追到 ledger entry，replay 后结果相同。
 
-## 24.6 里程碑三：独立硬风控
+当前 `ledger` 已覆盖平均成本、部分平仓、反手、fee、execution 幂等和冲突检测；`offline_trading_loop` 已验证 simulator、OMS 与账本串联后重复运行 checksum 一致。append-only event log、snapshot 和进程崩溃恢复仍需继续实现。
+
+## 27.6 里程碑三：独立硬风控
 
 实现：
 
@@ -123,7 +137,7 @@ restart between send and ack persistence
 - stale/gap/position drift 自动 risk-off。
 - kill 后仍继续处理 fill 和对账。
 
-## 24.7 里程碑四：策略与模拟交易所
+## 27.7 里程碑四：策略与模拟交易所
 
 策略基线保持简单：
 
@@ -144,7 +158,9 @@ quotes = rounded reservation +/- half-spread
 
 所有 simulated venue event 进入同一 OMS，不允许 simulator 直接改 position。
 
-## 24.8 里程碑五：研究与 PnL
+当前 `simulator` 已实现固定 send/new-ack/cancel/cancel-ack/fill-report latency，以及 touch、trade-through 和 L2 queue 基线。rate limit、post-only reject、随机经验分布、funding 和 depth walk 仍属于扩展目标。
+
+## 27.8 里程碑五：研究与 PnL
 
 输出至少包含：
 
@@ -165,7 +181,7 @@ quotes = rounded reservation +/- half-spread
 
 报告要明确收益有多少依赖成交假设，哪项结果不能外推到实盘。
 
-## 24.9 里程碑六：可观测与故障演练
+## 27.9 里程碑六：可观测与故障演练
 
 至少提供：
 
@@ -183,7 +199,7 @@ quotes = rounded reservation +/- half-spread
 4. 注入 cancel timeout，展示 uncertain、worst-case exposure 和对账。
 5. 重启 replay，展示 checksum、position 和 equity 一致。
 
-## 24.10 测试策略
+## 27.10 测试策略
 
 | 层 | 重点 |
 | --- | --- |
@@ -198,7 +214,7 @@ quotes = rounded reservation +/- half-spread
 
 CI 默认只使用固定离线数据。在线 contract test 单独运行，避免外部网络让正确性测试不稳定。
 
-## 24.11 性能报告
+## 27.11 性能报告
 
 不要只写“每秒 X 万消息”。报告包含：
 
@@ -209,7 +225,7 @@ CI 默认只使用固定离线数据。在线 contract test 单独运行，避�
 - 每次运行的最终 book/ledger checksum。
 - 网络未包含、模拟 venue 等边界。
 
-## 24.12 README 的诚实边界
+## 27.12 README 的诚实边界
 
 必须说明：
 
@@ -222,7 +238,7 @@ CI 默认只使用固定离线数据。在线 contract test 单独运行，避�
 
 可以说“在固定 L2 fixture 上通过 gap/replay/OMS 故障测试”，不能说“生产级盈利高频交易系统”。
 
-## 24.13 先固定领域 API
+## 27.13 先固定领域 API
 
 项目开始时不要让 strategy、simulator 和 OMS 各自定义订单结构。先用一个小而严格的领域 crate 固定信息流：
 
@@ -272,7 +288,7 @@ fn main() {
 - action 重试是否幂等？
 - replay 和 live 能否消费同一种 domain event？
 
-## 24.14 一份可审计配置
+## 27.14 一份可审计配置
 
 配置不只包含策略参数，还包含环境、元数据版本和硬限额：
 
@@ -309,27 +325,26 @@ seed = 42
 
 生产硬风控配置与策略配置应分开权限。示例放在一起便于教学，真实部署不能让策略发布流程同时提高账户 hard limit。
 
-## 24.15 一键演示应该讲一个故事
+## 27.15 一键演示应该讲一个故事
 
 优秀 demo 不是启动后滚动大量日志，而是用固定时间线展示系统判断：
 
 ```text
-00:00 load config/fixture; print manifest checksum
-00:01 snapshot + deltas -> book Healthy(seq=...)
-00:02 fair/quote -> risk Resize(reason=position budget)
-00:03 order ack + partial fill -> ledger/equity update
-00:04 missing delta -> book Invalid -> risk-off/cancel
-00:05 cancel timeout -> order Uncertain -> worst exposure rises
-00:06 reconciliation finds final fill -> idempotent ledger update
-00:07 new snapshot + full reconciliation -> ReadyForApproval
-00:08 replay ends; print state/PnL checksum and report path
+00:00 snapshot + deltas -> book Healthy(seq=...)
+00:01 fixed quote intent -> hard risk Allow
+00:02 fill-before-ack -> OMS Filled + ledger/equity update
+00:03 late ack + duplicate fill -> state does not regress or double count
+00:04 missing delta -> book Invalid -> hard risk rejects
+00:05 cancel timeout -> OMS Uncertain + venue PendingCancel
+00:06 reconciliation/cancel ack -> both sides Cancelled
+00:07 replay ends -> ledger checksum + equity_closed=true
 ```
 
-CLI 输出聚焦状态转换、reason 和关键 ID；详细 payload 进入结构化文件。演示结束生成 Markdown/HTML 摘要，面试官不需要安装 dashboard 才能理解结果。
+仓库当前 demo 已实现这条最小时间线。下一步应把硬编码输入替换成配置与 fixture，并将详细 payload 写入结构化文件；演示结束生成 Markdown/HTML 摘要，使读者不需要安装 dashboard 也能理解结果。
 
 准备三种长度：3 分钟展示目标和异常，10 分钟讲架构与证据，20 分钟深入 queue、OMS、risk、replay 和性能取舍。
 
-## 24.16 四次迭代，而不是一次大爆炸
+## 27.16 四次迭代，而不是一次大爆炸
 
 **迭代一：可信行情。** 只做一 venue、一 instrument、离线 fixture。交付 book 状态、gap 测试和 checksum。
 
@@ -341,7 +356,7 @@ CLI 输出聚焦状态转换、reason 和关键 ID；详细 payload 进入结构
 
 每次迭代结束都能独立运行，不把测试和文档推迟到最后。若时间不够，完整的前两次迭代比五个半成品更有价值。
 
-## 24.17 代码评审问题
+## 27.17 代码评审问题
 
 邀请别人评审时不要只问“代码怎么样”，给出可以证伪设计的问题：
 
@@ -356,7 +371,7 @@ CLI 输出聚焦状态转换、reason 和关键 ID；详细 payload 进入结构
 
 把评审发现转换成 failing test 或明确设计记录。口头提醒很快会丢失。
 
-## 24.18 项目验收定义
+## 27.18 项目验收定义
 
 完成不是所有模块都有代码，而是：
 

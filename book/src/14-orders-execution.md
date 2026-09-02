@@ -215,12 +215,62 @@ Smart order routing 需要规范化：价格、fee、可见深度、最小订单
 
 这说明执行任务不能只用 `target - confirmed_fill`；还要结合活动/不确定订单、订单类型和 overfill policy。
 
-## 14.13 本章练习
+## 14.13 Parent/Child 执行状态
+
+parent order 表示必须完成的业务任务，child order 才是发往 venue 的具体订单。两者不能共用一个 `remaining_qty`：child cancel 在途时，已经确认的成交、仍可能成交的数量和尚未分配的数量同时存在。
+
+对目标数量 `Q`，至少持续维护：
+
+```text
+confirmed_fill + active_child_remaining + uncertain_child_remaining
+  + unallocated_capacity = Q
+```
+
+这里的 `active_child_remaining` 包含 `PendingCancel`。只有 OMS 吸收 venue 的最终累计成交并确认 cancel 生效后，未成交余量才能回到 `unallocated_capacity`。请求已经发送、响应 timeout 的 child 则进入 uncertain，不能提前释放容量。
+
+配套 `execution` 模块实现了最小 parent/child 边界。下面示例来自 Cargo 编译的 example：
+
+```rust,ignore
+{{#include ../code/examples/parent_execution.rs}}
+```
+
+例子中目标买入 10 lots，maker child 原始数量 4、已确认成交 1、剩余 3 正在撤单，因此新 taker child 最多是 `10 - 1 - 3 = 6`。直接发送 9 会让两个 child 最坏同时把 parent 推到 13。
+
+这个教学 API 假设 `apply_confirmed_fill` 只消费经过 OMS execution 去重的事实；它不自行维护第二套 execution index。`confirm_cancel` 也只接受 OMS 已吸收最终 cumulative fill 后的权威结果。边界分工比在两个模块各做一半去重更容易审计。
+
+## 14.14 在同一场景比较执行算法
+
+不能用不同日期、不同目标和不同基准分别证明每种算法。先固定一个简化买入任务：目标 12 lots，decision mid 为 `100.00`，四个时点的可执行 ask 分别为 `100.05 / 100.02 / 100.08 / 100.20`，假设每个时点深度足够，taker fee 为 2 bps，暂不建模自身冲击。
+
+| Policy | Child 数量 | Fill VWAP | Price shortfall | Fee | 显式成本 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Immediate | `12,0,0,0` | 100.0500 | 0.60 | 0.2401 | 0.8401 |
+| TWAP | `3,3,3,3` | 100.0875 | 1.05 | 0.2402 | 1.2902 |
+| 示例 POV | `1,3,5,3` | 100.0925 | 1.11 | 0.2402 | 1.3502 |
+
+表中：
+
+```text
+price_shortfall = sum(child_qty * (fill_price - decision_price))
+fee             = sum(child_qty * fill_price * 2 / 10,000)
+```
+
+这个价格路径上 immediate 恰好更便宜，但结论不能外推。表格没有计入 12-lot 立即执行可能产生的额外 depth walk 和 market impact；若后续价格下降，TWAP/POV 又可能更有利。Implementation Shortfall policy 不是固定切片名称，而是随剩余时间、未完成数量、短期价格风险和冲击估计动态改变 urgency。
+
+公平实验应对每条历史 parent task 同时运行所有 policy，使用相同 point-in-time book、latency、fee、最大参与率和结束规则，并联合报告：
+
+- executed shortfall 与 opportunity cost，防止“不成交所以成本低”。
+- 最大 child、参与率和 depth walk，防止忽略容量。
+- completion distribution 和末段被迫执行数量。
+- cancel-in-flight/uncertain 暴露和 overfill 次数。
+- 不同趋势、波动、spread、depth regime 下的条件结果。
+
+## 14.15 本章练习
 
 1. 扩展 `sweep`，加入买卖方向、限价保护和 checked arithmetic，并分别测试空深度与部分可成交。
 2. 用 side sign 计算买卖 implementation shortfall。
 3. 模拟 maker order 的 queue ahead，比较频繁/延迟刷新。
-4. 设计 parent/child 执行状态，防止 cancel in-flight 时 overfill。
-5. 比较 TWAP、POV 和立即执行在趋势/震荡场景的风险。
+4. 扩展配套 `ParentExecution`，增加 uncertain child，并证明它与 pending-cancel 一样占用容量。
+5. 用相同的 parent fixtures 比较 TWAP、POV 和立即执行，加入 opportunity cost 与 depth walk 后重新解释结果。
 
 本章完成标准：能从 order type、queue、latency、fee 和剩余任务解释执行结果，而不是只比较成交均价。

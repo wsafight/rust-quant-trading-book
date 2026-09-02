@@ -1,10 +1,10 @@
-# 第 20 章 做市、执行、仓位与硬风控
+# 第 22 章 做市、执行、仓位与硬风控
 
 做市器持续给出买卖报价，希望在控制库存和逆向选择的同时获取价差。系统必须区分两种权力：策略回答“想下什么单”，独立硬风控回答“最多允许什么单”。策略故障不能绕过仓位、金额、价格、新鲜度和 kill switch。
 
-> **学习导航**　前置：第 13–19 章的微观结构、执行、账务、行情与 OMS｜目标：分离策略意图和独立硬风控，管理库存、对冲与 kill｜预计：14–20 小时｜产出：双边报价、worst-case risk、对冲实验与故障演练
+> **学习导航**　前置：第 13–21 章的微观结构、执行、账务、行情与 OMS｜目标：分离策略意图和独立硬风控，管理库存、对冲与 kill｜预计：14–20 小时｜产出：双边报价、worst-case risk、对冲实验与故障演练
 
-## 20.1 控制环
+## 22.1 控制环
 
 ```text
 valid market state -> fair value -> quote proposal -> hard risk
@@ -18,7 +18,7 @@ regime/health <- markout/PnL <- fills <- OMS/orders -> reject/resize
 
 输入、决策和结果都带 timestamp 与版本。策略看到的 book、signal、position 和 limits 需要是同一个可解释快照，不能把不同时间点的字段拼成一次决策。
 
-## 20.2 公允价不是“真实价格”
+## 22.2 公允价不是“真实价格”
 
 可解释的 fair value pipeline 可以从 mid 开始，逐步加入：
 
@@ -30,7 +30,7 @@ regime/health <- markout/PnL <- fills <- OMS/orders -> reject/resize
 
 每个特征都要有方向、预测 horizon、更新频率、标准化和缺失规则。不要在没有可信 fill model 之前叠加复杂机器学习；更准确的 mid 预测不一定转化成 maker PnL。
 
-## 20.3 报价中枢与 half-spread
+## 22.3 报价中枢与 half-spread
 
 一种清晰分解：
 
@@ -52,7 +52,7 @@ ask = reservation_price + half_spread
 
 这些项未必能被精确识别，但分解迫使团队讨论收益来源。买卖价量化到 tick 时要分别指定 rounding，保证 post-only、不交叉并满足最小 spread。
 
-## 20.4 Inventory skew
+## 22.4 Inventory skew
 
 当策略已有 long inventory，通常降低报价中枢或减小 bid size，使新增买入不再激进，并鼓励 ask 成交。简单线性形式：
 
@@ -70,7 +70,7 @@ inventory_skew = k * (position - target_position)
 
 关键不变量：仓位越接近 long hard limit，策略不能让买侧更具增险性；若有例外，需要明确组合对冲证据并仍通过硬风控。
 
-## 20.5 Quote 生命周期
+## 22.5 Quote 生命周期
 
 一次报价经历：
 
@@ -88,90 +88,31 @@ refresh 太快会失去 queue priority、增加消息成本、cancel/fill race �
 - rate-limit budget。
 - 仓位和对冲延迟。
 
-## 20.6 独立 Pre-trade 风控
+## 22.6 独立 Pre-trade 风控
 
 硬检查应使用策略无法修改的配置和权威状态：
 
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct OrderIntent {
-    price_ticks: i64,
-    qty_lots: i64,
-    increases_long: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct RiskSnapshot {
-    enabled: bool,
-    book_fresh: bool,
-    book_tradable: bool,
-    position_lots: i64,
-    open_buy_lots: i64,
-    max_long_lots: i64,
-    max_order_lots: i64,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum RiskDecision {
-    Allow,
-    Resize { max_qty_lots: i64 },
-    Reject(&'static str),
-}
-
-fn check(intent: OrderIntent, risk: RiskSnapshot) -> RiskDecision {
-    if !risk.enabled {
-        return RiskDecision::Reject("trading_disabled");
-    }
-    if !risk.book_fresh {
-        return RiskDecision::Reject("stale_market_data");
-    }
-    if !risk.book_tradable {
-        return RiskDecision::Reject("untradable_book");
-    }
-    if intent.price_ticks <= 0 || intent.qty_lots <= 0 {
-        return RiskDecision::Reject("invalid_price_or_qty");
-    }
-
-    let mut allowed = intent.qty_lots.min(risk.max_order_lots);
-    if intent.increases_long {
-        let remaining = i128::from(risk.max_long_lots)
-            - i128::from(risk.position_lots)
-            - i128::from(risk.open_buy_lots);
-        let remaining = remaining.clamp(0, i128::from(i64::MAX)) as i64;
-        allowed = allowed.min(remaining);
-    }
-
-    if allowed <= 0 {
-        RiskDecision::Reject("long_limit")
-    } else if allowed < intent.qty_lots {
-        RiskDecision::Resize { max_qty_lots: allowed }
-    } else {
-        RiskDecision::Allow
-    }
-}
-
-fn main() {
-    let decision = check(
-        OrderIntent { price_ticks: 100, qty_lots: 5, increases_long: true },
-        RiskSnapshot {
-            enabled: true,
-            book_fresh: true,
-            book_tradable: true,
-            position_lots: 8,
-            open_buy_lots: 1,
-            max_long_lots: 10,
-            max_order_lots: 5,
-        },
-    );
-    assert_eq!(decision, RiskDecision::Resize { max_qty_lots: 1 });
-}
+```rust,ignore
+{{#include ../code/src/risk.rs:risk_model}}
 ```
 
-教学代码只展示一个方向。生产检查还包括 instrument 状态、tick/lot/min notional、price collar、gross/net exposure、open-order exposure、loss/drawdown、margin buffer、rate limit、venue health、config version 和 reduce-only 语义。
+核心检查同时计算 long 与 short 的最坏边界：
+
+```rust,ignore
+{{#include ../code/src/risk.rs:risk_check}}
+```
+
+经过 Cargo 编译的调用示例：
+
+```rust,ignore
+{{#include ../code/examples/hard_risk.rs}}
+```
+
+该基线覆盖买卖方向、active/uncertain orders、订单上限和绝对仓位上限。生产检查还包括 instrument 状态、min notional、price collar、组合 gross/net exposure、loss/drawdown、margin buffer、rate limit、venue health、config version 和 reduce-only 语义。
 
 `book_fresh` 与 `book_tradable` 是两个独立门槛：前者来自时间戳，后者要求同步有效且 bid/ask 两侧都有可用顶档。空侧或单边 book 即使刚刚更新，也不能放行增加风险的订单。
 
-## 20.7 Worst-case exposure
+## 22.7 Worst-case exposure
 
 不能只看已确认仓位：
 
@@ -186,7 +127,7 @@ worst_long = confirmed_position
 
 跨所做市还要考虑 maker 双边同时成交、hedge order 未成交、两个 venue 各自断线以及抵押品相关性。
 
-## 20.8 对冲 policy
+## 22.8 对冲 policy
 
 对冲可以：
 
@@ -199,7 +140,7 @@ worst_long = confirmed_position
 
 对冲参数用 Pareto frontier 评估 fee、slippage、暴露时间、尾部仓位和 drawdown，不要只优化平均交易成本。
 
-## 20.9 分级风险响应
+## 22.9 分级风险响应
 
 风险动作从轻到重通常包括：
 
@@ -212,7 +153,7 @@ worst_long = confirmed_position
 
 触发源包括行情 stale/gap、私有流 stale、position drift、margin buffer、loss/drawdown、reject/429、hedge lag、queue age、时钟异常和配置变更。
 
-## 20.10 Kill switch 不是布尔变量
+## 22.10 Kill switch 不是布尔变量
 
 一个可信 kill switch 需要：
 
@@ -224,7 +165,7 @@ worst_long = confirmed_position
 
 范围可以是 strategy、symbol、venue、account 和 global。全局 kill 失效时需要人工控制台和交易所侧措施。
 
-## 20.11 成交质量与 PnL 归因
+## 22.11 成交质量与 PnL 归因
 
 每次 fill 至少记录：
 
@@ -236,7 +177,7 @@ worst_long = confirmed_position
 
 会计 PnL 先由权益恒等式闭合，再做互斥分析归因：spread capture、inventory revaluation、fees、funding、hedge slippage 与 residual。若一项无法互斥定义，就不要强行让漂亮图表替代账本。
 
-## 20.12 策略评审
+## 22.12 策略评审
 
 每个策略回答：
 
@@ -247,7 +188,7 @@ worst_long = confirmed_position
 - Evidence：out-of-sample、敏感性、容量与失败实验是什么？
 - Live plan：shadow、testnet、canary 的 gate 和 kill 是什么？
 
-## 20.13 一次报价的数值推导
+## 22.13 一次报价的数值推导
 
 假设 BTC 永续 best bid/ask 为 `60,000.0 / 60,001.0`，mid `60,000.5`。短期特征把 fair value 向上调整 `0.8`，得到 `60,001.3`。
 
@@ -273,7 +214,7 @@ total half-spread         3.2
 
 这不是说上述参数合理，而是展示每个报价如何可解释。研究需要用历史 markout、fill 和 hedge cost 校准各项；hard risk 还要检查 price collar、min notional、position/open-order exposure 和 book age。若 best bid 已升至或超过 `60,002.5`，旧 ask `60,002.5` 会变成 marketable；若 fair value 或 book version 已变化，它也可能只是 stale。发送前必须用最新可交易 book 再次检查 post-only 规则。
 
-## 20.14 Worst-case exposure 算例
+## 22.14 Worst-case exposure 算例
 
 当前 confirmed long 为 8 lots，还有 active buy 4、uncertain buy 3、active sell 5，long limit 为 12。不能简单计算净活动单：
 
@@ -291,7 +232,7 @@ worst long = 8 + 4 + 3 = 15 > 12
 
 同理，worst short 单独计算。组合风险再把每个 instrument 映射到 delta/beta 和 stress loss，不能用单一净币数替代。
 
-## 20.15 对冲阈值算例
+## 22.15 对冲阈值算例
 
 策略每次 maker fill 平均 0.01 BTC。立即用 taker 对冲的单次固定/最小成本较高，于是考虑累计到 0.05 BTC 再对冲。
 
@@ -305,7 +246,7 @@ worst long = 8 + 4 + 3 = 15 > 12
 
 研究输出应画出不同阈值下的 fee、slippage、hedge lag、position tail 和 drawdown，而不是只选净 PnL 最大点。
 
-## 20.16 一次成交的会计与分析视图
+## 22.16 一次成交的会计与分析视图
 
 策略 maker 买入 1 单位，成交价 100，fee 0.02；随后在 99.80 主动卖出对冲，fee 0.05。忽略 funding：
 
@@ -319,7 +260,7 @@ net equity change  = -0.27
 
 如果 dashboard 同时把“spread capture +0.10”和 realized PnL `-0.20` 相加，就重复计算了价格差。会计视图先闭合资金，分析视图再回答为什么变化。两者服务不同问题。
 
-## 20.17 本章练习
+## 22.17 本章练习
 
 1. 实现双边 quote proposal，并对 long inventory 上升写价格/数量不变量测试。
 2. 扩展 hard risk，计入 active 与 uncertain orders，覆盖双边同时成交。

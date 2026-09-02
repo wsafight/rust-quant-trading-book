@@ -29,27 +29,30 @@
 - [第 14 章 订单、撮合与执行成本](14-orders-execution.md)
 - [第 15 章 加密衍生品、保证金与 PnL](15-derivatives.md)
 - [第 16 章 量化数学与交易账务基础](16-quant-math-accounting.md)
+- [第 17 章 交易账本、幂等与对账](17-ledger-reconciliation.md)
 - [阶段检查点三：成本、衍生品与账务](gate-3-products-accounting.md)
 
 # 第四部分：构建交易系统
 
-- [第 17 章 行情、时钟与本地订单簿](17-market-data.md)
-- [第 18 章 交易所协议与 Adapter 设计](18-venue-protocols.md)
-- [第 19 章 订单状态机、接入与对账](19-oms-and-exchange.md)
-- [第 20 章 做市、执行、仓位与硬风控](20-strategy-and-risk.md)
+- [第 18 章 行情、时钟与本地订单簿](18-market-data.md)
+- [第 19 章 交易所协议与 Adapter 设计](19-venue-protocols.md)
+- [第 20 章 Venue 契约 Fixture 实战](20-venue-fixture-case.md)
+- [第 21 章 订单状态机、接入与对账](21-oms-and-exchange.md)
+- [第 22 章 做市、执行、仓位与硬风控](22-strategy-and-risk.md)
 - [阶段检查点四：交易闭环与硬风控](gate-4-trading-loop.md)
 
 # 第五部分：研究与生产
 
-- [第 21 章 数据、回测与仿真](21-backtesting.md)
-- [第 22 章 量化研究与统计验证](22-research-statistics.md)
-- [第 23 章 低延迟与生产可靠性](23-production.md)
+- [第 23 章 数据、回测与仿真](23-backtesting.md)
+- [第 24 章 模拟交易所与成交模型校准](24-simulator-calibration.md)
+- [第 25 章 量化研究与统计验证](25-research-statistics.md)
+- [第 26 章 低延迟与生产可靠性](26-production.md)
 - [阶段检查点五：可信研究与故障恢复](gate-5-research-production.md)
 
 # 第六部分：项目与职业路径
 
-- [第 24 章 贯穿项目：从行情到可审计 PnL](24-capstone.md)
-- [第 25 章 24 周成长与求职路径](25-career.md)
+- [第 27 章 贯穿项目：从行情到可审计 PnL](27-capstone.md)
+- [第 28 章 24 周成长与求职路径](28-career.md)
 
 # 附录
 

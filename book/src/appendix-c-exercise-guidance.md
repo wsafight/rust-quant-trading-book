@@ -88,9 +88,9 @@
 
 ### 第 14 章
 
-- **提示：** sweep 返回逐档结果和 remainder，并区分非法输入与深度不足；parent/child 状态始终保留剩余任务与在途订单。
-- **应测边界：** 买卖符号、深度不足、fee、部分成交、cancel in-flight overfill 和趋势/震荡场景。
-- **验收证据：** 手算执行样本、queue-ahead 敏感性及 TWAP/POV/立即执行的成本风险对照。
+- **提示：** sweep 返回逐档结果和 remainder，并区分非法输入与深度不足；从配套 `ParentExecution` 扩展 parent/child 状态，在途撤单仍占容量。
+- **应测边界：** 买卖符号、深度不足、fee、部分成交、cancel/uncertain child、overfill 和趋势/震荡场景。
+- **验收证据：** parent 容量测试、手算执行样本、queue-ahead 敏感性及同一 fixtures 上 TWAP/POV/立即执行的成本风险对照。
 
 ### 第 15 章
 
@@ -100,31 +100,43 @@
 
 ### 第 16 章
 
-- **提示：** return、PnL 和现金流都注明时间区间与方向；average-cost ledger 先更新 realized，再更新剩余成本。
-- **应测边界：** 长度不一、NaN、零方差、部分平仓/反手、fee、采样频率和 equity residual。
-- **验收证据：** 小样本手算、完整日内账本、不同频率 Sharpe 对照与 residual 阈值。
+- **提示：** return、PnL 和现金流都注明时间区间与方向；从配套 `ledger` 的 execution 幂等、平均成本与 equity identity 开始扩展。
+- **应测边界：** 长度不一、NaN、零方差、部分平仓/反手、重复/冲突 execution、fee、采样频率和 equity residual。
+- **验收证据：** 小样本手算、`cargo test ... ledger`、完整日内账本、不同频率 Sharpe 对照与 residual 阈值。
+
+### 第 17 章
+
+- **提示：** execution key 先校验作用域与完整事实；cash、position、cost basis 和 execution index 在同一提交边界变化。
+- **应测边界：** duplicate/conflict、分数平均成本、部分平仓、反手、fee currency、算术溢出、snapshot 损坏和重放。
+- **验收证据：** golden cash-flow 表、equity identity、稳定 checksum 和包含未解决 owner 的 reconciliation report。
 
 ## 第四部分：构建交易系统
 
-### 第 17 章
+### 第 18 章
 
 - **提示：** 原始 payload、normalized event 和 book state 分层保存；同步条件逐字来自 venue 文档。
 - **应测边界：** snapshot 前/中/后 delta、gap、duplicate、重连、stale、checksum failure 和 metadata 变更。
 - **验收证据：** recorder manifest、百万事件 checksum、同步状态图、尾延迟和一次 gap 演练。
 
-### 第 18 章
+### 第 19 章
 
 - **提示：** capability matrix 只统一真正相同的语义；client ID 跨重启和进程仍唯一稳定。
 - **应测边界：** tick/lot 方向舍入、min notional、ID 碰撞、组合限频、cancel 预留和 unknown status。
 - **验收证据：** 两个假 venue 的契约 fixture、规则版本、rate-limit 调度轨迹及保守降级日志。
 
-### 第 19 章
+### 第 20 章
+
+- **提示：** fixture 明确标注 synthetic/official/captured；raw JSON、metadata scale、normalized event 和最终 book 分层验证。
+- **应测边界：** gap、duplicate、乱序、零数量删除、非零超精度、必填字段缺失和兼容字段增加。
+- **验收证据：** fixture manifest、严格 decoder 测试、最终 book 断言和第二个 venue 的 capability 差异表。
+
+### 第 21 章
 
 - **提示：** reducer 保持纯函数，execution key 按真实作用域去重；timeout 产生 `Uncertain` 而非猜测终态。
 - **应测边界：** 本章列出的十条故障序列、overfill、旧终态事件、半截日志和重启对账。
 - **验收证据：** 转换表、表驱动/property 测试、reconciliation report 和重启前后账务 checksum。
 
-### 第 20 章
+### 第 22 章
 
 - **提示：** quote proposal 与 hard-risk decision 是不同权限边界；worst case 包含 active 与 uncertain orders。
 - **应测边界：** long 越接近上限买侧不得更激进、双边同时成交、stale book、hedge 断线和 kill 失败升级。
@@ -132,19 +144,25 @@
 
 ## 第五部分：研究与生产
 
-### 第 21 章
+### 第 23 章
 
-- **提示：** 模拟订单也经历 send/accept/queue/cancel/report；事件按时间、优先级和本地序号确定排序。
+- **提示：** 从配套 `simulator` 的 touch/trade-through/L2 queue 开始；模拟订单也经历 send/accept/queue/cancel/report，事件按时间、优先级和本地序号确定排序。
 - **应测边界：** 三类 fill model、延迟倍增、断线禁用、相同 seed、重复回放和账本闭合。
 - **验收证据：** 数据 lineage、模型敏感性、确定性 checksum、PnL 归因及模拟/实际偏差表。
 
-### 第 22 章
+### 第 24 章
 
-- **提示：** 先写谁支付收益和为何持续；时间切分、block bootstrap 和全部尝试记录共同限制自欺空间。
-- **应测边界：** 随机/时间切分差异、相关样本区间、参数邻域、regime、成本与最终 holdout。
-- **验收证据：** 不删失败结果的 manifest、effect size/区间和 Reject/Revise/Shadow/Canary 决策。
+- **提示：** order arrival、match、cancel effective 和 report 共用调度器；校准期与最终验证期严格分开。
+- **应测边界：** order eligibility、同 timestamp tie-breaker、partial fill 守恒、cancel race、联合尾延迟和多订单市场量分配。
+- **验收证据：** fill/latency 参数包、条件分布差异、未见验证结果、敏感性矩阵和明确模型拒绝条件。
 
-### 第 23 章
+### 第 25 章
+
+- **提示：** 先写谁支付收益和为何持续；明确 label information interval，从配套 BH 实现开始验证 family/FDR 输入。
+- **应测边界：** purge 前后、随机/时间切分差异、iid/多种 block length、参数邻域、family 范围、成本与最终 holdout。
+- **验收证据：** 不删失败结果的 manifest、effect size/区间、BH 表和 Reject/Revise/Shadow/Canary 决策。
+
+### 第 26 章
 
 - **提示：** process health 与 trading readiness 分开；每个 SLO 直接映射资金风险动作和 owner。
 - **应测边界：** queue age、磁盘/metrics/DNS 变慢、重启、回滚仍有活动订单、kill switch 和恢复审批。
@@ -152,13 +170,13 @@
 
 ## 第六部分：项目与职业路径
 
-### 第 24 章
+### 第 27 章
 
 - **提示：** 按四次可独立运行的迭代交付；先让行情和 OMS 正确，再接策略、研究与生产证据。
 - **应测边界：** 删除 delta、重复 fill、每个持久化边界 kill、风控绕过、未来数据、PnL residual 和过载。
 - **验收证据：** 一键离线 demo、架构决策、测试/benchmark/研究报告、演练复盘和可证伪的 README 声明。
 
-### 第 25 章
+### 第 28 章
 
 - **提示：** 能力评分只由可展示证据提高；岗位叙述采用“约束、行动、证据、局限”，不包装模拟收益。
 - **应测边界：** 让同伴追问 timeout、重启、规则来源、性能环境和回滚外部状态，看是否能具体回答。

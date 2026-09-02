@@ -7,6 +7,8 @@ publish = false
 description = "Runnable companion project for Rust 从入门到量化交易工程师"
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [dev-dependencies]

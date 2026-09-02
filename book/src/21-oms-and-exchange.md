@@ -1,12 +1,12 @@
-# 第 19 章 订单状态机、接入与对账
+# 第 21 章 订单状态机、接入与对账
 
 交易所接入最难的不是生成签名，而是在部分失败下保持订单、成交和仓位正确。请求可能已执行但响应丢失；fill 可能早于 new ack；cancel ack 与 final fill 可能乱序；重启时本地和远端都只提供部分事实。
 
-> **学习导航**　前置：第 10、18 章的副作用边界与 adapter 语义｜目标：实现纯 OMS reducer、持久化顺序、去重与启动对账｜预计：16–22 小时｜产出：转换表、十类故障测试、event log 与 reconciliation report
+> **学习导航**　前置：第 10、19、20 章的副作用边界、adapter 语义与契约 fixture｜目标：实现纯 OMS reducer、持久化顺序、去重与启动对账｜预计：16–22 小时｜产出：转换表、十类故障测试、event log 与 reconciliation report
 
 > **章节边界：** adapter 负责忠实报告 venue 事实，OMS 负责把乱序、重复和部分失败的事实收敛成可审计状态。本章开头只复述 adapter 契约以固定输入边界，不再展开 schema、签名或通用限频实现。
 
-## 19.1 Adapter 应保留危险差异
+## 21.1 Adapter 应保留危险差异
 
 推荐边界：
 
@@ -32,7 +32,7 @@ Domain command/event
 
 每个 adapter 发布 capability，启动时校验策略要求。
 
-## 19.2 Intent 先于请求
+## 21.2 Intent 先于请求
 
 策略产生的是订单意图，不是已经存在的订单：
 
@@ -53,166 +53,33 @@ strategy_decision_id
 
 高基数 ID 放日志与 trace，不要直接放 metrics label。
 
-## 19.3 订单状态机
+## 21.3 订单状态机
 
 状态与事件分开：
 
 ![OMS 保守订单状态机](assets/oms-state-machine.svg)
 
-*图 19-1：timeout 不证明订单失败；`Uncertain` 会限制新增风险，直到 query 或私有事件让事实收敛。*
+*-1：timeout 不证明订单失败；`Uncertain` 会限制新增风险，直到 query 或私有事件让事实收敛。*
 
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OrderStatus {
-    PendingNew,
-    Open,
-    PartiallyFilled,
-    PendingCancel,
-    Filled,
-    Cancelled,
-    Rejected,
-    Uncertain,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OrderEvent {
-    NewAck,
-    CancelRequested,
-    CancelAck,
-    Reject,
-    Timeout,
-    Fill { execution_id: u64, qty: i64 },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Order {
-    total_qty: i64,
-    filled_qty: i64,
-    status: OrderStatus,
-    executions: Vec<u64>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum ReduceError {
-    InvalidFillQty,
-    Overfill,
-    IllegalTransition,
-}
+```rust,ignore
+{{#include ../code/src/oms.rs:order_model}}
 ```
 
 用纯 reducer 处理事件，副作用由返回状态产生的 action 驱动：
 
-```rust
-# #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-# enum OrderStatus { PendingNew, Open, PartiallyFilled, PendingCancel, Filled, Cancelled, Rejected, Uncertain }
-# #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-# enum OrderEvent { NewAck, CancelRequested, CancelAck, Reject, Timeout, Fill { execution_id: u64, qty: i64 } }
-# #[derive(Debug, Clone, PartialEq, Eq)]
-# struct Order { total_qty: i64, filled_qty: i64, status: OrderStatus, executions: Vec<u64> }
-# #[derive(Debug, PartialEq, Eq)]
-# enum ReduceError { InvalidFillQty, Overfill, IllegalTransition }
-fn reduce(mut order: Order, event: OrderEvent) -> Result<Order, ReduceError> {
-    match event {
-        OrderEvent::Fill { execution_id, qty } => {
-            if order.executions.contains(&execution_id) {
-                return Ok(order);
-            }
-            if order.status == OrderStatus::Rejected {
-                return Err(ReduceError::IllegalTransition);
-            }
-            if qty <= 0 {
-                return Err(ReduceError::InvalidFillQty);
-            }
-            let filled = order.filled_qty.checked_add(qty).ok_or(ReduceError::Overfill)?;
-            if filled > order.total_qty {
-                return Err(ReduceError::Overfill);
-            }
-            let previous_status = order.status;
-            order.filled_qty = filled;
-            order.executions.push(execution_id);
-            order.status = if filled == order.total_qty {
-                OrderStatus::Filled
-            } else if previous_status == OrderStatus::Cancelled {
-                // 成交发生在撤单生效前，但报告较晚到达；保留已撤终态。
-                OrderStatus::Cancelled
-            } else {
-                OrderStatus::PartiallyFilled
-            };
-        }
-        OrderEvent::NewAck
-            if matches!(order.status, OrderStatus::PendingNew | OrderStatus::Uncertain) =>
-        {
-            order.status = if order.filled_qty == 0 {
-                OrderStatus::Open
-            } else {
-                OrderStatus::PartiallyFilled
-            };
-        }
-        // fill 可以先到；之后的旧 ack 不得把状态从 Filled 回退。
-        OrderEvent::NewAck
-            if matches!(
-                order.status,
-                OrderStatus::PartiallyFilled | OrderStatus::Filled | OrderStatus::Cancelled
-            ) => {}
-        OrderEvent::Reject
-            if matches!(order.status, OrderStatus::PendingNew | OrderStatus::Uncertain)
-                && order.filled_qty == 0 =>
-        {
-            order.status = OrderStatus::Rejected;
-        }
-        OrderEvent::CancelRequested
-            if matches!(order.status, OrderStatus::Open | OrderStatus::PartiallyFilled) =>
-        {
-            order.status = OrderStatus::PendingCancel;
-        }
-        OrderEvent::CancelAck
-            if matches!(
-                order.status,
-                OrderStatus::Open
-                    | OrderStatus::PartiallyFilled
-                    | OrderStatus::PendingCancel
-                    | OrderStatus::Uncertain
-            ) =>
-        {
-            order.status = OrderStatus::Cancelled;
-        }
-        OrderEvent::CancelAck
-            if matches!(order.status, OrderStatus::Filled | OrderStatus::Cancelled) => {}
-        OrderEvent::Timeout
-            if !matches!(
-                order.status,
-                OrderStatus::Filled | OrderStatus::Cancelled | OrderStatus::Rejected
-            ) =>
-        {
-            order.status = OrderStatus::Uncertain;
-        }
-        OrderEvent::Timeout
-            if matches!(
-                order.status,
-                OrderStatus::Filled | OrderStatus::Cancelled | OrderStatus::Rejected
-            ) => {}
-        _ => return Err(ReduceError::IllegalTransition),
-    }
-    Ok(order)
-}
-
-fn main() {
-    let order = Order {
-        total_qty: 10,
-        filled_qty: 0,
-        status: OrderStatus::PendingNew,
-        executions: vec![],
-    };
-    let order = reduce(order, OrderEvent::Fill { execution_id: 7, qty: 10 }).unwrap();
-    let order = reduce(order, OrderEvent::NewAck).unwrap();
-    assert_eq!(order.status, OrderStatus::Filled);
-    assert_eq!(order.filled_qty, 10);
-}
+```rust,ignore
+{{#include ../code/src/oms.rs:order_reducer}}
 ```
 
-教学实现用 `Vec` 查重，生产可换为集合或持久索引。更重要的是 execution key 的作用域：不能默认裸 `trade_id` 全局唯一。典型键是 `(venue, account, instrument, execution_id)`，最终以 venue 文档和 fixture 为准。
+fill-before-ack 的可运行调用示例直接来自 Cargo example：
 
-## 19.4 必须保持的不变量
+```rust,ignore
+{{#include ../code/examples/oms_out_of_order.rs}}
+```
+
+配套实现使用内存 `HashSet` 查重，持久化版本仍需 durable index。更重要的是 execution key 的作用域：不能默认裸 `trade_id` 全局唯一。典型键是 `(venue, account, instrument, execution_id)`，最终以 venue 文档和 fixture 为准。
+
+## 21.4 必须保持的不变量
 
 - cumulative filled qty 单调不减，且不超过订单总量。
 - 同一 execution key 只改变一次仓位和现金。
@@ -224,7 +91,7 @@ fn main() {
 
 状态机应有转换表、表驱动测试、property test 与事件 replay。
 
-## 19.5 Timeout 的未知状态
+## 21.5 Timeout 的未知状态
 
 三条必须分开的事实：
 
@@ -242,7 +109,7 @@ send/response timeout 后：
 
 “请求失败”只有在得到明确、可信的拒绝时才能成为订单不存在的证据。
 
-## 19.6 先落盘，后发送
+## 21.6 先落盘，后发送
 
 增险操作的 write-ahead 顺序：
 
@@ -256,7 +123,7 @@ persist(IntentCreated, stable_client_id) -> durability boundary
 
 写入 page cache 不等于持久化。每单 fsync 最安全但可能过慢；group commit 需要明确延迟预算和最坏 RPO。具体存储可从 append-only framed log 起步，但必须测试半截尾部、checksum、schema version、snapshot 原子替换和 `kill -9` 恢复。
 
-## 19.7 Amend 与 cancel-replace
+## 21.7 Amend 与 cancel-replace
 
 需要明确：
 
@@ -268,7 +135,7 @@ persist(IntentCreated, stable_client_id) -> durability boundary
 
 如果实际是 cancel + new，就不要在领域层伪装成原子 amend。风险系统必须看见中间阶段。
 
-## 19.8 私有流与 REST 共同还原事实
+## 21.8 私有流与 REST 共同还原事实
 
 私有流通常低延迟，REST query 适合启动、周期和异常对账；不能机械规定某一路永远权威。融合依据包括：
 
@@ -280,7 +147,7 @@ persist(IntentCreated, stable_client_id) -> durability boundary
 
 未知远端订单、未知本地订单和 position drift 都要有显式策略，不能为了让 dashboard 归零而无审计地覆盖。
 
-## 19.9 启动恢复 Gate
+## 21.9 启动恢复 Gate
 
 推荐启动顺序：
 
@@ -295,7 +162,7 @@ persist(IntentCreated, stable_client_id) -> durability boundary
 
 进程 ready 与 trading ready 必须分开。服务能响应健康检查，不代表允许增加资金风险。
 
-## 19.10 Rate limit 是资源预算
+## 21.10 Rate limit 是资源预算
 
 每个 venue 至少建模：
 
@@ -306,7 +173,7 @@ persist(IntentCreated, stable_client_id) -> durability boundary
 
 本地 token bucket 只是预测。需要为风险动作预留额度，接近阈值时降低 quote churn 与非必要 query。收到 429 后遵守服务端提示和 jitter backoff，不能用更多重试扩大故障。
 
-## 19.11 对账类型
+## 21.11 对账类型
 
 - 启动对账：重启后重建可信世界。
 - 周期对账：发现静默 drift。
@@ -315,7 +182,7 @@ persist(IntentCreated, stable_client_id) -> durability boundary
 
 每次差异都应记录本地值、venue 值、证据时间、采取动作和是否需要人工确认。
 
-## 19.12 Reducer 与 Action 为什么分开
+## 21.12 Reducer 与 Action 为什么分开
 
 如果 reducer 内直接发送网络请求、写数据库和更新指标，同一事件就无法纯粹 replay：重放 `CancelRequested` 会再次真的撤单，测试也需要复杂外部环境。
 
@@ -338,7 +205,7 @@ Action executor 完成副作用，再把结果转换成新 domain event，例如
 
 关键是不能在 action 真正完成前假装状态已经完成。`CancelRequested` 可以产生 `SendCancel`，但订单仍可成交；只有可信 `CancelAck` 或对账事实才能进入 `Cancelled`。
 
-## 19.13 Execution 幂等入账
+## 21.13 Execution 幂等入账
 
 一次 fill 通常同时影响：
 
@@ -364,7 +231,7 @@ else:
 
 相同 key 但 price/qty/fee 不同不是普通重复，说明 adapter、venue 修正事件或数据损坏，需要审计与对账。不能保留“最后一条”覆盖资金事实。
 
-## 19.14 崩溃点矩阵
+## 21.14 崩溃点矩阵
 
 对一次 new order，从 intent 到 ack 列出每个可能崩溃点：
 
@@ -379,7 +246,7 @@ else:
 
 这张表决定 write-ahead 内容和 durability boundary。只说“我们有数据库事务”不够；需要明确网络副作用不在本地事务内，哪一步仍然可能产生未知订单。
 
-## 19.15 Reconciliation 算法
+## 21.15 Reconciliation 算法
 
 对账不是直接用 venue snapshot 覆盖本地。一个可审计流程：
 
@@ -406,7 +273,7 @@ BalanceDrift         fee/funding/transfer/cash 未解释
 
 REST snapshot 本身也可能分页、延迟或最终一致。查询结束时又可能产生新 fill，所以需要私有流 sequence/watermark 或按 venue 规则建立 snapshot 与增量衔接。
 
-## 19.16 本章故障序列
+## 21.16 本章故障序列
 
 必须用测试覆盖：
 

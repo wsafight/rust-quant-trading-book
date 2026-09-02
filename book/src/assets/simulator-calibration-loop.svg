@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-labelledby="title desc">
+  <title id="title">模拟成交模型的校准与未见数据验证闭环</title>
+  <desc id="desc">真实 shadow 与 canary 观察按时间切分为校准期和未见验证期；参数只在校准期拟合，模型冻结后在验证期比较条件分布，通过门禁才可用于决策。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#344054"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="540" fill="#f8fafc"/>
+  <text x="55" y="58" font-family="sans-serif" font-size="29" font-weight="700" fill="#101828">成交模型必须在未见时期证明误差边界</text>
+
+  <g font-family="sans-serif" text-anchor="middle">
+    <rect x="45" y="130" width="175" height="100" rx="6" fill="#dff4ff" stroke="#1570a6" stroke-width="2"/>
+    <rect x="260" y="130" width="175" height="100" rx="6" fill="#fff1c2" stroke="#b77900" stroke-width="2"/>
+    <rect x="475" y="130" width="175" height="100" rx="6" fill="#ece9fe" stroke="#6938b8" stroke-width="2"/>
+    <rect x="690" y="130" width="190" height="100" rx="6" fill="#dff4ff" stroke="#1570a6" stroke-width="2"/>
+    <rect x="920" y="130" width="235" height="100" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+
+    <text x="132" y="166" font-size="17" font-weight="700" fill="#105b88">Shadow / Canary</text>
+    <text x="132" y="192" font-size="14" fill="#475467">订单 · 行情 · latency</text>
+    <text x="132" y="212" font-size="14" fill="#475467">fill · fee · markout</text>
+
+    <text x="347" y="166" font-size="17" font-weight="700" fill="#7a4f00">校准期</text>
+    <text x="347" y="192" font-size="14" fill="#475467">拟合 queue / latency</text>
+    <text x="347" y="212" font-size="14" fill="#475467">保留参数尝试</text>
+
+    <text x="562" y="166" font-size="17" font-weight="700" fill="#53309a">冻结模型版本</text>
+    <text x="562" y="192" font-size="14" fill="#475467">policy · seed</text>
+    <text x="562" y="212" font-size="14" fill="#475467">参数 · tie-breaker</text>
+
+    <text x="785" y="166" font-size="17" font-weight="700" fill="#105b88">未见验证期</text>
+    <text x="785" y="192" font-size="14" fill="#475467">禁止回调参数</text>
+    <text x="785" y="212" font-size="14" fill="#475467">按时间向前测试</text>
+
+    <text x="1037" y="166" font-size="17" font-weight="700" fill="#075c35">条件分布与风险门禁</text>
+    <text x="1037" y="192" font-size="14" fill="#475467">fill · queue · regime</text>
+    <text x="1037" y="212" font-size="14" fill="#475467">markout · tail · residual</text>
+
+    <rect x="160" y="350" width="260" height="100" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+    <rect x="470" y="350" width="260" height="100" rx="6" fill="#fff1c2" stroke="#b77900" stroke-width="2"/>
+    <rect x="780" y="350" width="260" height="100" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+
+    <text x="290" y="386" font-size="17" font-weight="700" fill="#9f1f17">Reject</text>
+    <text x="290" y="412" font-size="14" fill="#475467">偏差越界，不扩大规模</text>
+    <text x="290" y="432" font-size="14" fill="#475467">保存失败 regime</text>
+
+    <text x="600" y="386" font-size="17" font-weight="700" fill="#7a4f00">下一轮假设</text>
+    <text x="600" y="412" font-size="14" fill="#475467">新模型版本 · 新时间窗</text>
+    <text x="600" y="432" font-size="14" fill="#475467">不得重用原验证期</text>
+
+    <text x="910" y="386" font-size="17" font-weight="700" fill="#075c35">Accept for Shadow</text>
+    <text x="910" y="412" font-size="14" fill="#475467">记录适用范围与误差</text>
+    <text x="910" y="432" font-size="14" fill="#475467">持续监控模型漂移</text>
+  </g>
+
+  <g stroke="#344054" stroke-width="3" fill="none" marker-end="url(#arrow)">
+    <line x1="220" y1="180" x2="254" y2="180"/>
+    <line x1="435" y1="180" x2="469" y2="180"/>
+    <line x1="650" y1="180" x2="684" y2="180"/>
+    <line x1="880" y1="180" x2="914" y2="180"/>
+    <path d="M1037 230V290H910V344"/>
+    <path d="M920 230V290H290V344"/>
+    <line x1="420" y1="400" x2="464" y2="400"/>
+  </g>
+  <path d="M600 350V300H347V236" fill="none" stroke="#b77900" stroke-width="2.5" stroke-dasharray="8 6" marker-end="url(#arrow)"/>
+  <text x="598" y="492" text-anchor="middle" font-family="sans-serif" font-size="15" fill="#475467">验证回答“冻结模型能否外推”，不是“还能怎样调到更贴合这段数据”</text>
+</svg>

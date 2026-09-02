@@ -1,6 +1,6 @@
 # 附录 E 参考资料与规则来源
 
-本页提供继续核对定义和实现细节的入口，不替代正文中的推导、fixture 或测试。链接最近复核于 **2026-08-26**。外部页面可能更新；涉及资金的规则必须按附录 D 保存访问日期、版本和原始响应。
+本页提供继续核对定义和实现细节的入口，不替代正文中的推导、fixture 或测试。链接最近复核于 **2026-09-02**。外部页面可能更新；涉及资金的规则必须按附录 D 保存访问日期、版本和原始响应。
 
 ## Rust 与工程工具
 
@@ -35,6 +35,8 @@
 
 - Andrew W. Lo, [The Statistics of Sharpe Ratios](https://doi.org/10.2469/faj.v58.n4.2453), *Financial Analysts Journal*, 2002：相关性和非正态下 Sharpe 的统计解释。
 - David H. Bailey et al., [The Probability of Backtest Overfitting](https://doi.org/10.2139/ssrn.2326253), 2013：多重尝试和回测选择偏差。
+- Yoav Benjamini and Yosef Hochberg, [Controlling the False Discovery Rate](https://doi.org/10.1111/j.2517-6161.1995.tb02031.x), *Journal of the Royal Statistical Society: Series B*, 1995：BH step-up 与 false discovery rate 的原始论文。
+- Hans R. Künsch, [The Jackknife and the Bootstrap for General Stationary Observations](https://doi.org/10.1214/aos/1176347265), *The Annals of Statistics*, 1989：相关序列的 block resampling 基础。
 - Marcos López de Prado, *Advances in Financial Machine Learning*, Wiley, 2018：时间切分、purging/embargo 与研究工程；具体方法仍需结合数据生成过程验证。
 - [NIST/SEMATECH e-Handbook of Statistical Methods](https://www.itl.nist.gov/div898/handbook/)：分布、置信区间、实验设计与诊断的通用参考。
 

@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500" role="img" aria-labelledby="title desc">
+  <title id="title">Venue fixture 从原始载荷到订单簿契约</title>
+  <desc id="desc">冻结的 JSON 字节依次通过原始 schema、十进制与序列归一化、领域事件和订单簿不变量；任一层失败都进入明确错误并阻止发布可交易订单簿。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#344054"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="500" fill="#f8fafc"/>
+  <text x="55" y="58" font-family="sans-serif" font-size="29" font-weight="700" fill="#101828">Fixture 把外部 JSON 约束收窄为内部订单簿契约</text>
+
+  <g font-family="sans-serif" text-anchor="middle">
+    <rect x="40" y="125" width="170" height="100" rx="6" fill="#dff4ff" stroke="#1570a6" stroke-width="2"/>
+    <rect x="245" y="125" width="170" height="100" rx="6" fill="#dff4ff" stroke="#1570a6" stroke-width="2"/>
+    <rect x="450" y="125" width="190" height="100" rx="6" fill="#fff1c2" stroke="#b77900" stroke-width="2"/>
+    <rect x="675" y="125" width="170" height="100" rx="6" fill="#ece9fe" stroke="#6938b8" stroke-width="2"/>
+    <rect x="880" y="125" width="170" height="100" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+
+    <text x="125" y="161" font-size="17" font-weight="700" fill="#105b88">冻结原始字节</text>
+    <text x="125" y="187" font-size="14" fill="#475467">payload · checksum</text>
+    <text x="125" y="207" font-size="14" fill="#475467">source · access date</text>
+
+    <text x="330" y="161" font-size="17" font-weight="700" fill="#105b88">Raw Schema</text>
+    <text x="330" y="187" font-size="14" fill="#475467">serde JSON</text>
+    <text x="330" y="207" font-size="14" fill="#475467">wire 字段与类型</text>
+
+    <text x="545" y="161" font-size="17" font-weight="700" fill="#7a4f00">严格归一化</text>
+    <text x="545" y="187" font-size="14" fill="#475467">decimal → ticks / lots</text>
+    <text x="545" y="207" font-size="14" fill="#475467">symbol · U/u · metadata</text>
+
+    <text x="760" y="161" font-size="17" font-weight="700" fill="#53309a">领域事件</text>
+    <text x="760" y="187" font-size="14" fill="#475467">Snapshot / Delta</text>
+    <text x="760" y="207" font-size="14" fill="#475467">不依赖 JSON 字段名</text>
+
+    <text x="965" y="161" font-size="17" font-weight="700" fill="#075c35">Order Book</text>
+    <text x="965" y="187" font-size="14" fill="#475467">sequence · crossed</text>
+    <text x="965" y="207" font-size="14" fill="#475467">expected final state</text>
+
+    <rect x="140" y="340" width="210" height="92" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+    <rect x="410" y="340" width="210" height="92" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+    <rect x="680" y="340" width="210" height="92" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+    <rect x="950" y="340" width="210" height="92" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+
+    <text x="245" y="375" font-size="16" font-weight="700" fill="#9f1f17">Decode Error</text>
+    <text x="245" y="401" font-size="14" fill="#475467">缺字段 · 错类型</text>
+
+    <text x="515" y="375" font-size="16" font-weight="700" fill="#9f1f17">Precision Error</text>
+    <text x="515" y="401" font-size="14" fill="#475467">超精度 · 溢出 · scale</text>
+
+    <text x="785" y="375" font-size="16" font-weight="700" fill="#9f1f17">Contract Error</text>
+    <text x="785" y="401" font-size="14" fill="#475467">symbol · sequence · schema</text>
+
+    <text x="1055" y="375" font-size="16" font-weight="700" fill="#9f1f17">Invalid / Risk-off</text>
+    <text x="1055" y="401" font-size="14" fill="#475467">不发布可交易 book</text>
+  </g>
+
+  <g stroke="#344054" stroke-width="3" fill="none" marker-end="url(#arrow)">
+    <line x1="210" y1="175" x2="239" y2="175"/>
+    <line x1="415" y1="175" x2="444" y2="175"/>
+    <line x1="640" y1="175" x2="669" y2="175"/>
+    <line x1="845" y1="175" x2="874" y2="175"/>
+  </g>
+  <g stroke="#d92d20" stroke-width="2.5" stroke-dasharray="8 6" fill="none" marker-end="url(#arrow)">
+    <path d="M330 225V285H245V334"/>
+    <path d="M545 225V334"/>
+    <path d="M760 225V285H785V334"/>
+    <path d="M965 225V334"/>
+  </g>
+  <text x="600" y="474" text-anchor="middle" font-family="sans-serif" font-size="15" fill="#475467">每层保留输入与预期输出，失败能定位、能重放、不能静默修正</text>
+</svg>

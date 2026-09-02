@@ -3,6 +3,7 @@ use std::fmt;
 
 use crate::domain::{ClientOrderId, ExecutionKey, QtyLots};
 
+// ANCHOR: order_model
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderStatus {
     PendingNew,
@@ -77,7 +78,9 @@ impl fmt::Display for ReduceError {
 }
 
 impl std::error::Error for ReduceError {}
+// ANCHOR_END: order_model
 
+// ANCHOR: order_reducer
 pub fn reduce(mut order: Order, event: OrderEvent) -> Result<Order, ReduceError> {
     match event {
         OrderEvent::Fill { key, qty } => {
@@ -160,3 +163,4 @@ pub fn reduce(mut order: Order, event: OrderEvent) -> Result<Order, ReduceError>
     }
     Ok(order)
 }
+// ANCHOR_END: order_reducer

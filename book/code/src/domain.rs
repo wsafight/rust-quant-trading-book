@@ -53,7 +53,7 @@ pub enum Side {
     Sell,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ClientOrderId(String);
 
 impl ClientOrderId {
@@ -66,7 +66,7 @@ impl ClientOrderId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExecutionKey {
     pub venue: String,
     pub account: String,

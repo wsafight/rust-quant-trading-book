@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">交易账本与对账数据流</title>
+  <desc id="desc">成交、费用和资金事件进入不可变事实日志，经幂等账本投影为现金与仓位，再结合估值生成权益；本地投影与交易所事实通过对账差异控制风险门禁。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#344054"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="520" fill="#f8fafc"/>
+  <text x="55" y="58" font-family="sans-serif" font-size="29" font-weight="700" fill="#101828">资金事实只追加，状态可重建，对账决定是否增险</text>
+
+  <g font-family="sans-serif" text-anchor="middle">
+    <rect x="45" y="125" width="180" height="96" rx="6" fill="#dff4ff" stroke="#1570a6" stroke-width="2"/>
+    <rect x="280" y="125" width="180" height="96" rx="6" fill="#fff1c2" stroke="#b77900" stroke-width="2"/>
+    <rect x="515" y="125" width="180" height="96" rx="6" fill="#ece9fe" stroke="#6938b8" stroke-width="2"/>
+    <rect x="750" y="125" width="180" height="96" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+    <rect x="985" y="125" width="170" height="96" rx="6" fill="#d1fadf" stroke="#16834b" stroke-width="2"/>
+
+    <text x="135" y="159" font-size="17" font-weight="700" fill="#105b88">资金事实</text>
+    <text x="135" y="184" font-size="14" fill="#475467">fill · fee · funding</text>
+    <text x="135" y="204" font-size="14" fill="#475467">transfer · settlement</text>
+
+    <text x="370" y="159" font-size="17" font-weight="700" fill="#7a4f00">不可变事件日志</text>
+    <text x="370" y="184" font-size="14" fill="#475467">schema · sequence</text>
+    <text x="370" y="204" font-size="14" fill="#475467">checksum · raw source</text>
+
+    <text x="605" y="159" font-size="17" font-weight="700" fill="#53309a">Ledger Reducer</text>
+    <text x="605" y="184" font-size="14" fill="#475467">execution 幂等</text>
+    <text x="605" y="204" font-size="14" fill="#475467">checked arithmetic</text>
+
+    <text x="840" y="159" font-size="17" font-weight="700" fill="#075c35">权威投影</text>
+    <text x="840" y="184" font-size="14" fill="#475467">cash · position</text>
+    <text x="840" y="204" font-size="14" fill="#475467">open cost · realized</text>
+
+    <text x="1070" y="159" font-size="17" font-weight="700" fill="#075c35">带时点估值</text>
+    <text x="1070" y="184" font-size="14" fill="#475467">mark · FX</text>
+    <text x="1070" y="204" font-size="14" fill="#475467">unrealized · equity</text>
+
+    <rect x="45" y="345" width="220" height="94" rx="6" fill="#dff4ff" stroke="#1570a6" stroke-width="2"/>
+    <rect x="335" y="345" width="220" height="94" rx="6" fill="#ece9fe" stroke="#6938b8" stroke-width="2"/>
+    <rect x="625" y="345" width="220" height="94" rx="6" fill="#fff1c2" stroke="#b77900" stroke-width="2"/>
+    <rect x="915" y="345" width="240" height="94" rx="6" fill="#fee4e2" stroke="#d92d20" stroke-width="2"/>
+
+    <text x="155" y="380" font-size="17" font-weight="700" fill="#105b88">交易所查询事实</text>
+    <text x="155" y="406" font-size="14" fill="#475467">orders · fills · balances</text>
+
+    <text x="445" y="380" font-size="17" font-weight="700" fill="#53309a">Reconciliation</text>
+    <text x="445" y="406" font-size="14" fill="#475467">同一 scope 与 as_of 比较</text>
+
+    <text x="735" y="380" font-size="17" font-weight="700" fill="#7a4f00">差异与残差</text>
+    <text x="735" y="406" font-size="14" fill="#475467">missing · conflict · drift</text>
+
+    <text x="1035" y="380" font-size="17" font-weight="700" fill="#9f1f17">Risk / Readiness Gate</text>
+    <text x="1035" y="406" font-size="14" fill="#475467">未解释则保持 risk-off</text>
+  </g>
+
+  <g stroke="#344054" stroke-width="3" fill="none" marker-end="url(#arrow)">
+    <line x1="225" y1="173" x2="274" y2="173"/>
+    <line x1="460" y1="173" x2="509" y2="173"/>
+    <line x1="695" y1="173" x2="744" y2="173"/>
+    <line x1="930" y1="173" x2="979" y2="173"/>
+    <line x1="265" y1="392" x2="329" y2="392"/>
+    <line x1="555" y1="392" x2="619" y2="392"/>
+    <line x1="845" y1="392" x2="909" y2="392"/>
+  </g>
+  <g stroke="#667085" stroke-width="2.5" stroke-dasharray="8 6" fill="none" marker-end="url(#arrow)">
+    <path d="M840 221V287H445V339"/>
+    <path d="M1070 221V304H520V339"/>
+  </g>
+  <text x="760" y="282" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#475467">本地投影与权益恒等式</text>
+  <text x="600" y="486" text-anchor="middle" font-family="sans-serif" font-size="15" fill="#475467">Duplicate 不重复入账；Conflict 冻结投影；差异解释完成后才能恢复增险</text>
+</svg>

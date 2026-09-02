@@ -106,7 +106,38 @@ remaining cost = 3 * 106 = 318
 
 fee 单独记账。反向合约、不同 cost-basis policy 和 venue settlement 需要不同实现，不能用同一公式硬套。
 
-## 16.8 Equity 对账
+## 16.8 可运行账本：事实、精度与幂等
+
+配套工程的 `book/code/src/ledger.rs` 实现了上述 average-cost 规则。它刻意保持一个简化但闭合的单位系统：`price_ticks * qty_lots` 得到 quote unit，fee 也使用 quote unit。读者扩展真实产品时必须再加入 tick value、lot value、contract multiplier 和 fee currency，不能把教学单位直接当成交易所余额。
+
+账本处理一笔 fill 的顺序是：
+
+```text
+execution key 去重/冲突检查
+-> checked notional 与 cash movement
+-> 关闭反向仓位并确认 realized price PnL
+-> 必要时以剩余数量反手建仓
+-> 提交 execution 与新状态
+-> 用 mark 验证 equity identity
+```
+
+平均成本可能产生分数。例如先买 `1 @ 100`、再买 `2 @ 101`，平均成本是 `302/3`。实现不能为了方便默默截断；配套基线用约分后的有理数保存 cost basis 与 realized PnL，同时用整数保存现金。真实系统也可以使用 decimal，但必须明确 scale、舍入时点、余数归属并用交易所账单校准。
+
+execution key 重复时有两种情况：完全相同的事实是幂等重放，不改变状态；相同 key 对应不同 price、qty、side 或 fee 是数据冲突，必须报错，不能当普通 duplicate 丢弃。可以直接运行对应测试：
+
+```bash
+cargo test --locked --manifest-path book/code/Cargo.toml ledger
+```
+
+`Ledger::apply_fill` 先在克隆状态上完成所有 checked arithmetic，再整体提交，因此溢出或冲突不会留下“现金已变、仓位未变”的半次入账。这是教学版事务边界；接入持久化后，还需用 append-only event、原子 snapshot 和重放 checksum 保护进程崩溃边界。
+
+下面的示例不是正文副本，而是由 Cargo 直接编译的 `examples/ledger_round_trip.rs`：
+
+```rust,ignore
+{{#include ../code/examples/ledger_round_trip.rs}}
+```
+
+## 16.9 Equity 对账
 
 固定账户范围：
 
@@ -122,7 +153,7 @@ ending equity - starting equity
 
 如果不闭合，建立 suspense/residual，不要把差异强塞给“其他 PnL”。优先检查：重复/缺失 execution、fee currency、funding、transfer、mark source、FX conversion 和核算边界。
 
-## 16.9 Sharpe 的局限
+## 16.10 Sharpe 的局限
 
 ```text
 Sharpe = mean(excess_return) / std(return)
@@ -132,7 +163,7 @@ Sharpe = mean(excess_return) / std(return)
 
 同时报告：总/年化收益、波动、最大回撤、turnover、hit/fill、skew/tail、容量、regime 和置信区间。
 
-## 16.10 Drawdown
+## 16.11 Drawdown
 
 Drawdown 是权益相对历史峰值的下降：
 
@@ -162,13 +193,13 @@ fn main() {
 
 历史 max drawdown 不是未来上界。结合仓位 limit、stress loss 和故障情景。
 
-## 16.11 置信区间与经济误差
+## 16.12 置信区间与经济误差
 
 策略净优势 2 bps、统计区间 `[1,3]` bps 看似为正，但 queue/fee/latency 模型误差可能 ±5 bps。研究需要同时呈现统计不确定性和实施模型不确定性。
 
 后者通常不能靠更多同类历史样本完全消除，需要 shadow/canary、保守参数包和硬风险限制。
 
-## 16.12 数值实现原则
+## 16.13 数值实现原则
 
 - 订单/账务使用 tick/lot/decimal 和 checked arithmetic。
 - 统计使用浮点时显式处理 NaN/inf。
@@ -177,12 +208,12 @@ fn main() {
 - 任何年化、归因和比例记录定义版本。
 - 手算样例、官方账单 fixture 和 property test 共同验证。
 
-## 16.13 本章练习
+## 16.14 本章练习
 
 1. 计算一组 simple/log returns，并比较累积结果。
 2. 实现 covariance 和 beta，处理长度、NaN 和零方差。
-3. 建立 average-cost ledger，加入 fee 与部分平仓。
-4. 用完整现金流验证一天 equity 恒等式。
+3. 扩展配套 average-cost ledger，加入外部现金流和 funding，并保持现有幂等与反手测试通过。
+4. 用完整现金流验证一天 equity 恒等式，再修改一个 execution 的 fee，确认对账能够发现差异。
 5. 对同一收益序列按不同采样频率计算 Sharpe，解释差异。
 
 本章完成标准：任何收益、风险或 PnL 数字都能说明方向、单位、时间、采样、成本和账务边界。
