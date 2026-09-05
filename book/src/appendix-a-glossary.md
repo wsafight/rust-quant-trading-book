@@ -1,6 +1,6 @@
 # 附录 A 术语与公式速查
 
-本附录固定全书的默认阅读口径。真实交易所规则、乘数、费率、结算、ID 作用域和保证金必须由版本化 metadata、官方文档与 fixture 覆盖。
+本附录用于查词和核对公式，不建议第一次接触交易时连续背诵。每个中文概念后保留常见英文写法，便于对应代码和交易所文档。真实交易所规则、乘数、费率、结算、编号作用域和保证金，必须由带版本的产品说明、官方文档与固定测试样本覆盖。
 
 ## A.1 领域数值
 
@@ -39,7 +39,9 @@ microprice = (best_ask * bid_qty + best_bid * ask_qty)
              / (bid_qty + ask_qty)
 ```
 
-## A.4 Signed markout
+## A.4 成交后的价格变化（signed markout）
+
+这个指标观察“成交之后，价格向有利还是不利方向走了多少”。买入后上涨、卖出后下跌记为对策略有利：
 
 ```text
 signed_markout_bps(h)
@@ -48,7 +50,7 @@ signed_markout_bps(h)
 
 正值对策略有利，负值表示逆向选择。horizon 默认按本地可见时间；若 `t+h` 的 book invalid/stale，样本缺失并报告缺失率。
 
-## A.5 线性合约 PnL
+## A.5 线性合约盈亏
 
 ```text
 unrealized_pnl_quote
@@ -58,7 +60,7 @@ unrealized_pnl_quote
 
 结算于 quote currency，实际 multiplier、精度和 average entry 按 metadata。
 
-## A.6 反向合约 PnL
+## A.6 反向合约盈亏
 
 ```text
 unrealized_pnl_base
@@ -68,9 +70,9 @@ unrealized_pnl_base
 
 通常结算于 base currency，价格变化对 base PnL 非线性。
 
-## A.7 Funding
+## A.7 资金费用（funding）
 
-默认阅读约定：正 funding 时 long 支付 short。
+默认阅读约定：资金费率为正时，多头支付空头。
 
 ```text
 funding_charge = signed_position_notional * funding_rate
@@ -79,7 +81,7 @@ funding_income = -funding_charge
 
 `funding_income > 0` 表示账户收入。notional price、settlement、cap/floor 与字段符号必须按 venue 验证。
 
-## A.8 Basis
+## A.8 基差（basis）
 
 ```text
 basis = futures_price - spot_price
@@ -140,7 +142,7 @@ ending_equity - starting_equity
 
 spread capture、inventory revaluation、hedge slippage 是分析视图，不与会计科目重复相加。归因显式包含 residual。
 
-## A.12 Execution key
+## A.12 成交身份键（execution key）
 
 典型形式：
 
@@ -151,7 +153,7 @@ execution_key
 
 必须先核验 execution ID 在 venue/account/instrument/order/session 中的唯一性。相同 key 只入账一次。
 
-## A.13 Correlation ID 链
+## A.13 关联编号链
 
 ```text
 strategy_decision_id
@@ -161,15 +163,15 @@ strategy_decision_id
   -> execution_key
 ```
 
-ID 进入日志/trace，避免作为高基数 metrics label。
+这些编号进入日志和调用链追踪，便于从策略判断一路找到最终成交。不要把大量不同编号直接作为监控指标标签，否则会制造过多时间序列。
 
 ## A.14 时间
 
-- exchange event time：venue 定义的事件时间。
-- local receive time：本地收到事件的时间。
-- local process time：关键阶段处理时间。
-- monotonic clock：进程内 duration。
-- sequence：venue 或本地因果序列。
+- 交易所事件时间（exchange event time）：交易所定义的事件发生时间。
+- 本地接收时间（local receive time）：本机收到事件的时间。
+- 本地处理时间（local process time）：本机关键阶段处理事件的时间。
+- 单调时钟（monotonic clock）：只向前推进，适合计算进程内持续时间。
+- 消息编号（sequence）：交易所或本地用于表达先后关系的编号。
 
 研究只用当时本地可见信息。跨 venue 比较记录时钟同步与不确定性。
 
@@ -186,16 +188,16 @@ ID 进入日志/trace，避免作为高基数 metrics label。
 
 | 术语 | 含义 |
 | --- | --- |
-| maker / taker | 提供 / 消耗流动性 |
-| adverse selection | 被更有信息的交易选择，成交后价格不利 |
-| markout | 成交后一段时间的方向化价格变化 |
-| inventory skew | 按库存偏移报价中枢或大小 |
-| reservation price | 报价中枢 |
-| queue position | 同价格优先级中的估计位置 |
-| worst-case exposure | 当前仓位加活动/不确定订单的最坏暴露 |
-| risk-off | 禁止增险，撤单、对账并只允许受控降险 |
-| kill switch | 独立停止新单、撤单并人工接管的控制 |
-| point-in-time | 只使用决策时点已可见的数据 |
-| deterministic replay | 同输入、配置和 seed 得到相同状态 |
-| RTO / RPO | 恢复时间目标 / 最大数据丢失目标 |
-| trading readiness | 完成行情、私有状态、风险和对账后的交易许可 |
+| 挂单方 / 主动成交方（maker / taker） | 提供 / 消耗流动性 |
+| 逆向选择（adverse selection） | 成交后价格很快向不利方向变化 |
+| 成交后价格变化（markout） | 成交后一段时间，价格向有利或不利方向变化多少 |
+| 库存偏移（inventory skew） | 根据已有仓位调整报价中枢或数量 |
+| 报价中枢（reservation price） | 策略围绕它安排买卖报价的参考价格 |
+| 排队位置（queue position） | 自己的订单在同一价格中的估计优先顺序 |
+| 最坏情况暴露（worst-case exposure） | 当前仓位加上活动订单和不确定订单可能形成的最大暴露 |
+| 禁止增险（risk-off） | 不再增加风险，继续撤单、对账并只允许受控降险 |
+| 紧急停止开关（kill switch） | 独立停止新单、发起撤单并转入人工接管的控制 |
+| 当时可见（point-in-time） | 只使用决策时点已经可以看到的数据 |
+| 确定性回放（deterministic replay） | 相同输入、配置和随机种子得到相同状态 |
+| 恢复时间 / 数据丢失目标（RTO / RPO） | 最长可接受恢复时间 / 最大可接受数据丢失范围 |
+| 交易就绪（trading readiness） | 行情、私有状态、风险和对账都满足要求后的交易许可 |

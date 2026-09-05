@@ -1,246 +1,261 @@
-# 第 27 章 贯穿项目：从行情到可审计 PnL
+# 第 27 章 贯穿项目：从行情到可审计盈亏
 
-贯穿项目的目标是交付一个离线可演示的 Rust 交易系统：读取录制的 L2 数据，重建订单簿，生成做市意图，经硬风控后进入模拟交易所，用 OMS 处理成交，最终对账仓位与 PnL。它不连接真实资金，也不声称策略盈利。
+贯穿项目的目标，是完成一个可以离线演示的 Rust 交易系统：读取录制的二档行情，重建订单簿，生成简单做市意图，通过硬风控后进入模拟交易所，再由订单管理系统处理成交，最终核对仓位与盈亏。它不连接真实资金，也不声称策略能够盈利。
 
-> **学习导航**　前置：通过前五个阶段检查点｜目标：把行情、策略、hard risk、OMS、模拟交易所和账务连成可审计闭环｜预计：30–50 小时｜产出：一键离线 demo、完整测试、研究/性能报告和故障复盘
+> **学习导航**
+>
+> - 开始前：通过前五个阶段检查点，已有各部分的小型产物。
+> - 这一章学会：把行情、策略、风控、订单和账本连接成完整演示。
+> - 大约需要：30–50 小时。
+> - 做完留下：一键离线演示、完整测试、研究/性能报告和故障复盘。
+
+> **开章场景：每个模块都通过测试，连起来却对不上**
+>
+> 行情模块正确重建了订单簿，策略模块能生成报价，风控、订单管理和账本也各自通过了测试。真正串起来时，策略把 100.25 元传成 10025 个最小价格单位，适配器却再次放大 100 倍；模拟成交后，订单管理使用的编号又与账本去重编号不一致。每个局部看似正确，完整结果仍然错误。
+>
+> 贯穿项目会让同一批固定行情依次经过订单簿、策略、风控、模拟交易所、订单管理和账本，并注入缺口、重复、超时与重启。**本章要解决的是：怎样证明所有模块共享同一套单位和事实，最终盈亏能够逐步追溯。**
+
+> **第一次阅读建议**
+>
+> 先运行 27.2 的两条命令，观察程序已经展示的完整时间线，再读六个里程碑。第一次实现只做单一交易所、单一产品、固定策略和短行情样本；先完成一个能稳定失败和恢复的小闭环，再扩展性能和研究报告。
 
 ## 27.1 为什么做一个闭环
 
-三个互不相连的小 demo 很难证明边界是否一致。贯穿项目可以暴露真正的接口问题：
+三个互不相连的小演示，很难证明它们连接后仍使用相同单位和事实。贯穿项目会暴露真正的接口问题：
 
-- strategy 的价格单位能否被 adapter 正确量化？
-- OMS 的 fill 是否只入账一次？
-- replay clock 是否决定所有 freshness 与 latency？
-- risk 是否计入 active/uncertain order？
-- simulated exchange 是否经过真实订单状态机？
-- PnL 是否与现金、仓位、fee 和 funding 闭合？
+- 策略给出的价格，能否被适配器正确转换成交易所单位？
+- 同一笔成交重复到达时，订单系统是否只入账一次？
+- 回放时钟是否统一决定行情新鲜度和系统延迟？
+- 风控是否把活动订单和状态未知订单计入最坏风险？
+- 模拟交易所产生的消息是否经过真实订单状态机？
+- 盈亏能否与现金、仓位、交易费用和资金费用互相对上？
 
-## 27.2 Workspace 结构
+## 27.2 先运行仓库已经提供的最小闭环
 
-仓库中的 `book/code` 是已经可运行的单 package 起点，先用下面两条命令确认环境和核心边界：
+仓库中的 `book/code` 是已经可以运行的单项目起点。先用下面两条命令观看演示并运行测试：
 
 ```bash
 cargo run --locked --manifest-path book/code/Cargo.toml --bin demo
 cargo test --locked --manifest-path book/code/Cargo.toml
 ```
 
-它已经提供领域类型、L2 book、OMS、hard risk、average-cost ledger、三种成交模型、replay、Tokio 测试和 Criterion benchmark。`demo` 会串联 fill-before-ack、duplicate fill、sequence gap、cancel timeout、对账与权益闭合。
+它已经提供业务类型、二档订单簿、订单管理、硬风控、平均成本账本、三种成交模型、历史回放、异步测试和性能基准。`demo` 会依次展示成交先于接受确认、重复成交、行情序号缺口、撤单超时、对账和权益核对。
 
 当前能力边界如下：
 
 | 能力 | 当前基线 | 本章完整目标 |
 | --- | --- | --- |
-| 行情 | 内存 snapshot/delta 与 gap | raw fixture recorder、schema/version、百万事件 replay |
-| 订单 | OMS reducer 与 simulated report | durable intent、action executor、启动对账 |
-| 账本 | position/cash/fee、平均成本与 equity identity | funding、transfer、真实产品单位和持久化恢复 |
-| 仿真 | 固定延迟与三种 fill model | 参数分布、reject/rate-limit、校准报告 |
-| 策略/报告 | 固定教学 intent 与控制台时间线 | 双边报价、研究指标、结构化报告和 runbook |
+| 行情 | 内存中的快照、增量与缺口处理 | 原始样本记录、格式版本和百万事件回放 |
+| 订单 | 订单状态更新与模拟交易所消息 | 可靠保存订单意图、执行外部动作和启动对账 |
+| 账本 | 仓位、现金、费用、平均成本和权益核对 | 资金费、转账、真实产品单位和崩溃恢复 |
+| 仿真 | 固定延迟与三种成交模型 | 延迟分布、拒单、请求限流和校准报告 |
+| 策略与报告 | 固定教学意图和控制台时间线 | 双边报价、研究指标、结构化报告和处置手册 |
 
-下面的多 crate workspace 是完成本章后可逐步演化出的目标结构，不是仓库当前目录的虚假清单：
+项目扩大后，可以逐步演化成下面的多包工作区（workspace）。这是目标结构，不是仓库当前已经存在的目录：
 
 ```text
 quant-engine/
   Cargo.toml
   crates/
     domain/          领域类型、事件、时间与标识
-    market-data/     raw/normalized fixture、同步、book
-    strategy/        fair value、quote、hedge policy
-    risk/            hard checks、limits、kill state
-    oms/             order reducer、execution dedup、ledger
-    simulator/       exchange、queue、latency、fee/funding
-    replay/          deterministic clock 与 event scheduler
-    observability/   metrics、structured events、reports
-    app/             CLI 与组件装配
+    market-data/     原始样本、内部事件、同步与订单簿
+    strategy/        公允价、报价和对冲规则
+    risk/            硬检查、限额和停止状态
+    oms/             订单状态、成交去重和账本
+    simulator/       模拟交易所、排队、延迟和费用
+    replay/          可控时钟与事件调度器
+    observability/   指标、结构化事件和报告
+    app/             命令行入口与组件组装
   fixtures/
   configs/
   reports/
   runbooks/
 ```
 
-不要一开始拆成网络微服务。Cargo workspace 内的模块边界足以展示所有权和契约；完成正确基线后再根据部署与故障隔离需要拆进程。
+不要一开始就拆成许多网络服务。Cargo 工作区内的模块边界，已经足以展示数据由谁负责和模块之间的约定；完成正确的单进程版本后，再根据部署和故障隔离需要拆分进程。
 
-## 27.3 领域契约
+## 27.3 先统一全项目的单位和方向
 
-先写不可变约定：
+编码前先写下全项目共同遵守的约定：
 
-- `PriceTicks`、`QtyLots`、`VenueId`、`InstrumentId`。
-- signed position：正 long，负 short。
-- signed markout：买 `+1`、卖 `-1`，正值有利。
-- funding income：正数表示账户收入。
-- execution key 唯一性作用域。
-- 四种时间语义和 replay clock。
-- 会计 PnL 恒等式。
+- 价格最小单位、数量最小单位、交易所编号和产品编号。
+- 带正负号的仓位：正数表示多头，负数表示空头。
+- 方向调整后的成交后价格变化：买单方向记为 `+1`，卖单方向记为 `-1`，正数表示有利。
+- 资金费收入为正数时，表示账户收到资金。
+- 成交唯一键在哪个范围内唯一。
+- 多种时间分别表示什么，以及回放时钟怎样推进。
+- 账户权益、现金、仓位和费用怎样互相核对。
 
-所有 crate 依赖 `domain` 的类型，不各自发明单位和方向。
+所有代码包都使用 `domain` 中定义的业务类型，不能各自发明价格单位、数量单位和正负方向。
 
 ## 27.4 里程碑一：行情与订单簿
 
 实现：
 
-- 原始 fixture reader 和版本化 normalized event。
-- snapshot/delta 同步、gap 与 checksum 接口。
-- L2 book、top-N、mid、microprice、depth/sweep cost。
+- 固定原始样本读取器和带版本的内部事件。
+- 快照与增量同步、序号缺口和校验值接口。
+- 二档订单簿、前几档报价、中间价、微观价格和逐档成交成本。
 - `Empty/Synchronizing/Healthy/Invalid/Stale` 状态。
-- deterministic replay 与 checksum。
+- 确定性回放与最终校验值。
 
 验收：
 
 - 连续回放 100 万事件，结果稳定。
-- 删除一个 delta 后 book invalid，策略不再收到可交易 view。
-- 重复/乱序/checksum failure 有明确处理。
-- 记录 p50/p99/p99.9 wire-to-book 和 queue age。
+- 删除一条增量后订单簿变为不可用，策略不再收到可交易视图。
+- 重复、乱序和校验失败都有明确处理。
+- 记录从原始消息到订单簿的中位数、第 99 和第 99.9 百分位延迟，以及队列消息年龄。
 
-演示命令应只使用仓库 fixture，不要求 API key。
+演示命令只使用仓库固定样本，不要求 API 密钥。
 
-## 27.5 里程碑二：OMS 与账本
+## 27.5 里程碑二：订单状态与账本
 
 实现：
 
-- intent、client/venue order ID 与 execution key。
-- 纯订单 reducer 和 action executor 接口。
-- fill 去重、平均成本、position/cash/fee ledger。
-- append-only event log 与 snapshot。
-- open order、fills、position、balance reconciliation diff。
+- 订单意图、本地订单编号、交易所订单编号和成交唯一键。
+- 纯订单状态更新函数和外部动作执行器接口。
+- 成交去重、平均成本，以及仓位、现金和费用账本。
+- 只在末尾追加的事件日志与状态快照。
+- 活动订单、成交、仓位和余额的对账差异。
 
 验收事件：
 
 ```text
-pending_new -> fill -> new_ack
-open -> cancel_requested -> partial_fill -> cancel_ack
-open -> cancel_requested -> final_fill -> late_cancel_ack
-send timeout -> uncertain -> query/open or fill
-duplicate execution -> no duplicate cash/position
-restart between persist and send
-restart between send and ack persistence
+等待新单确认 -> 成交 -> 接受确认
+活动订单 -> 请求撤销 -> 部分成交 -> 撤单确认
+活动订单 -> 请求撤销 -> 完全成交 -> 迟到的撤单确认
+发送超时 -> 状态未知 -> 查询发现活动订单或成交
+重复成交 -> 现金和仓位不重复变化
+可靠保存意图后、发送请求前重启
+发送请求后、可靠保存确认前重启
 ```
 
-每条事件从原始输入追到 ledger entry，replay 后结果相同。
+每条事件都能从原始输入追到对应账本记录，重放后结果保持相同。
 
-当前 `ledger` 已覆盖平均成本、部分平仓、反手、fee、execution 幂等和冲突检测；`offline_trading_loop` 已验证 simulator、OMS 与账本串联后重复运行 checksum 一致。append-only event log、snapshot 和进程崩溃恢复仍需继续实现。
+当前 `ledger` 模块已经覆盖平均成本、部分平仓、反向开仓、交易费用、成交防重和内容冲突检测。`offline_trading_loop` 测试已经验证模拟器、订单系统和账本串联后，重复运行得到相同校验值。只追加事件日志、状态快照和进程崩溃恢复仍需继续实现。
 
 ## 27.6 里程碑三：独立硬风控
 
 实现：
 
-- trading enable/kill state。
-- tick/lot/min notional 与 price collar。
-- max order、position、gross/net/open-order exposure。
-- book/private state freshness。
-- margin buffer、loss/drawdown 与 rate-limit budget。
-- `Allow/Resize/Reject(reason)` 决策审计。
+- 交易启用和紧急停止状态。
+- 最小价格与数量单位、最小订单价值和允许价格范围。
+- 单笔订单、仓位、总风险、净风险和活动订单风险上限。
+- 订单簿与私有账户状态的新鲜度。
+- 保证金缓冲、亏损、回撤和剩余请求额度。
+- `Allow/Resize/Reject(reason)`，即允许、缩小或拒绝，并记录原因。
 
 验收：
 
-- 策略不能直接访问 gateway send。
-- active 与 uncertain order 计入 worst-case exposure。
+- 策略不能直接调用交易所发送接口。
+- 活动订单和状态未知订单计入最坏风险。
 - long 接近上限时买单不会增加越限风险。
-- stale/gap/position drift 自动 risk-off。
-- kill 后仍继续处理 fill 和对账。
+- 行情过期、序号缺口或仓位差异会自动停止增险。
+- 紧急停止后仍继续处理成交和对账。
 
 ## 27.7 里程碑四：策略与模拟交易所
 
 策略基线保持简单：
 
 ```text
-fair = mid 或 microprice
-reservation = fair - inventory skew
-half-spread = fee + volatility + latency + hedge + buffer
-quotes = rounded reservation +/- half-spread
+公允价 = 中间价或按买卖数量调整的微观价格
+报价中心 = 公允价 - 仓位偏移
+半价差 = 费用 + 波动补偿 + 延迟补偿 + 对冲成本 + 安全余量
+买卖报价 = 合法舍入后的报价中心 +/- 半价差
 ```
 
 模拟交易所实现：
 
-- send/cancel/response latency 分布。
-- accept/reject、rate limit 与 post-only。
-- touch、trade-through 和 L2 queue 三类成交模型。
-- partial fill、cancel/fill race 与 execution report latency。
-- maker/taker fee、funding 与简化 depth walk。
+- 下单、撤单和消息返回的延迟分布。
+- 接受、拒绝、请求限流和“只挂单”规则。
+- 触价、穿价和二档排队三类成交模型。
+- 部分成交、撤单与成交交错，以及成交消息返回延迟。
+- 挂单与主动成交费用、资金费和简化逐档成交。
 
-所有 simulated venue event 进入同一 OMS，不允许 simulator 直接改 position。
+所有模拟交易所事件都进入同一个订单管理系统，不允许模拟器直接修改仓位。
 
-当前 `simulator` 已实现固定 send/new-ack/cancel/cancel-ack/fill-report latency，以及 touch、trade-through 和 L2 queue 基线。rate limit、post-only reject、随机经验分布、funding 和 depth walk 仍属于扩展目标。
+当前 `simulator` 模块已经实现固定的发送、新单确认、撤单、撤单确认和成交报告延迟，也实现了触价、穿价和二档排队模型。请求限流、“只挂单”拒单、从真实分布随机抽样、资金费和逐档成交仍属于扩展目标。
 
-## 27.8 里程碑五：研究与 PnL
+## 27.8 里程碑五：研究与盈亏
 
 输出至少包含：
 
-- gross/net PnL、fee、funding 与权益对账 residual。
-- position distribution、gross/net exposure、time-at-limit。
-- fill ratio、maker/taker、quote age。
-- 10 ms/100 ms/1 s/10 s signed markout 和无效样本率。
-- hedge delay/slippage、drawdown 与 turnover。
-- 按 volatility/spread/depth regime 拆分。
+- 成本前和成本后盈亏、交易费用、资金费，以及无法解释的权益差额。
+- 仓位分布、总风险、净风险和处于限额附近的时间。
+- 成交比例、挂单与主动成交比例、报价年龄。
+- 成交后 10 毫秒、100 毫秒、1 秒和 10 秒的方向价格变化，以及无效样本比例。
+- 对冲延迟、成交价偏差、最大回撤和交易频率。
+- 按波动、买卖价差和订单簿深度等市场环境拆分。
 
 敏感性矩阵：
 
-- 三种成交模型与乐观/中性/悲观 queue。
-- latency 1x/2x/5x/10x。
-- fee tier、rebate 和对冲频率。
-- inventory skew 与 hard limit。
-- 断线/invalid 窗口。
+- 三种成交模型与乐观、中性和悲观排队假设。
+- 延迟为基准的 1、2、5 和 10 倍。
+- 费率等级、手续费返还和对冲频率。
+- 仓位偏移强度与硬限额。
+- 断线和订单簿不可用窗口。
 
 报告要明确收益有多少依赖成交假设，哪项结果不能外推到实盘。
 
-## 27.9 里程碑六：可观测与故障演练
+## 27.9 里程碑六：监控与故障演练
 
 至少提供：
 
-- feed/book/OMS/risk/replay 状态指标。
-- 分段 latency histogram 和 queue age。
-- structured decision/order/execution 日志。
-- gap、timeout、private stale、429、disk slow、position drift 告警。
-- 一份 incident report 和对应 runbook。
+- 行情、订单簿、订单管理、风控和回放状态指标。
+- 各处理阶段的延迟分布和队列消息年龄。
+- 结构化的策略决定、订单和成交日志。
+- 序号缺口、超时、私有消息过期、限流、磁盘变慢和仓位差异告警。
+- 一份事故报告和对应处置手册。
 
 一键 demo 顺序：
 
-1. 正常回放，展示 book、quote、orders、fills 和 PnL。
-2. 删除 delta，展示 book invalid 与 risk-off。
-3. 注入 fill-before-ack，展示订单不回退且只入账一次。
-4. 注入 cancel timeout，展示 uncertain、worst-case exposure 和对账。
-5. 重启 replay，展示 checksum、position 和 equity 一致。
+1. 正常回放，展示订单簿、报价、订单、成交和盈亏。
+2. 删除一条增量，展示订单簿不可用和系统停止增险。
+3. 让成交先于接受确认到达，展示订单状态不倒退，成交也只入账一次。
+4. 注入撤单超时，展示未知订单、最坏风险和对账。
+5. 重启回放，展示校验值、仓位和账户权益保持一致。
 
 ## 27.10 测试策略
 
 | 层 | 重点 |
 | --- | --- |
-| Unit | decimal/tick、fee、PnL、risk predicate |
-| Table | long/short、linear/inverse、事件序列 |
-| Property | book、filled qty、exposure、ledger invariant |
-| Fixture contract | venue payload、metadata、sequence/checksum |
-| Replay | 全系统状态和输出 checksum |
-| Fuzz | decoder、decimal、OMS event |
-| Fault | gap、timeout、disconnect、429、disk |
-| Load/soak | 2 倍峰值率、p99.9、age、内存 |
+| 单元测试 | 小数转换、最小价格单位、费用、盈亏和单条风控规则 |
+| 成组案例测试 | 多头与空头、线性与反向合约、不同事件顺序 |
+| 规则测试 | 订单簿、累计成交量、风险和账本始终应满足的规则 |
+| 固定样本契约 | 交易所原始消息、产品规则、序号和校验值 |
+| 回放测试 | 全系统状态和输出校验值 |
+| 随机异常输入 | 解析器、小数转换和订单事件 |
+| 故障测试 | 序号缺口、超时、断线、限流和磁盘异常 |
+| 负载与长时间测试 | 2 倍峰值、第 99.9 百分位延迟、消息年龄和内存 |
 
-CI 默认只使用固定离线数据。在线 contract test 单独运行，避免外部网络让正确性测试不稳定。
+持续集成默认只使用固定离线数据。在线契约测试单独运行，避免外部网络让正确性测试变得不稳定。
 
 ## 27.11 性能报告
 
 不要只写“每秒 X 万消息”。报告包含：
 
-- 硬件、OS、Rust、release profile、依赖与 CPU 配置。
-- fixture 消息数、大小和价格档分布。
+- 硬件、操作系统、Rust 版本、优化构建配置、依赖和 CPU 配置。
+- 固定样本的消息数量、大小和价格档分布。
 - 单线程基线、优化假设和改动。
-- p50/p99/p99.9/max、吞吐、allocation、queue age。
-- 每次运行的最终 book/ledger checksum。
-- 网络未包含、模拟 venue 等边界。
+- 中位数、第 99 和第 99.9 百分位、最大延迟、吞吐、内存分配和消息年龄。
+- 每次运行的最终订单簿和账本校验值。
+- 是否不包含真实网络，以及使用模拟交易所等适用边界。
 
-## 27.12 README 的诚实边界
+## 27.12 项目说明必须诚实写明边界
 
 必须说明：
 
-- 使用 L2 还是 L3，queue 如何近似。
+- 使用二档还是逐订单行情，排队位置怎样近似。
 - 延迟来自实测、合成还是固定值。
-- fee/funding/margin 规则版本。
+- 费用、资金费和保证金规则版本。
 - 是否连接过 testnet/生产，是否使用真实资金。
-- 自身 market impact、隐藏流动性和 outage 如何处理。
+- 怎样处理自身市场冲击、隐藏流动性和交易所停机。
 - 哪些模块是教学实现，不适合直接生产。
 
-可以说“在固定 L2 fixture 上通过 gap/replay/OMS 故障测试”，不能说“生产级盈利高频交易系统”。
+可以说“在固定二档行情样本上通过序号缺口、回放和订单故障测试”，不能说“生产级盈利高频交易系统”。
 
-## 27.13 先固定领域 API
+## 27.13 先固定模块之间传递什么
 
-项目开始时不要让 strategy、simulator 和 OMS 各自定义订单结构。先用一个小而严格的领域 crate 固定信息流：
+项目开始时，不要让策略、模拟器和订单管理系统各自定义一套订单结构。先在一个小而严格的业务类型包中，统一模块之间传递的信息：
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,15 +293,15 @@ fn main() {
 }
 ```
 
-`QuoteIntent` 不是 venue request：它还没做 symbol 映射、client ID、TIF 和 capability 校验。risk 也不直接发送；它产生经过审计的 decision，gateway/OMS 才创建 durable order intent。
+`QuoteIntent` 只表示策略提出的报价意图，还不是发往交易所的请求：它尚未映射交易所产品代码，也没有本地订单编号、有效时间和功能检查。风控也不直接发送订单；它只产生带审计记录的决定，再由接入层和订单管理系统创建可靠保存的订单意图。
 
 接口设计评审时检查：
 
-- 是否携带输入版本和 correlation ID？
-- 是否把 venue wire 字段泄漏进通用领域？
+- 是否携带输入版本和用于串起整次操作的关联编号？
+- 是否把某家交易所的原始字段泄漏到通用业务类型中？
 - 哪些值可能缺失，是否用 `Option/Result/enum` 表达？
-- action 重试是否幂等？
-- replay 和 live 能否消费同一种 domain event？
+- 外部动作重试时是否会产生重复资金影响？
+- 历史回放和实时运行能否使用同一种内部事件？
 
 ## 27.14 一份可审计配置
 
@@ -321,38 +336,38 @@ taker_fee_bps = 5
 seed = 42
 ```
 
-加载时校验跨字段关系，例如 `quote_lots <= max_order_lots`、hard limit 非负、延迟和 fee 有合理范围、metadata version 与 fixture 匹配。运行开始后把完整解析结果和 checksum 写入 manifest；只记录文件名不足以复现实验，因为文件可能被改写。
+加载配置时要检查字段之间的关系，例如报价数量不能超过单笔订单上限，硬限额不能为负，延迟和费率要在合理范围内，产品规则版本也要与固定样本匹配。运行开始后，把完整解析结果和校验值写入实验清单；只记录文件名不足以复现实验，因为同名文件可能后来被改写。
 
-生产硬风控配置与策略配置应分开权限。示例放在一起便于教学，真实部署不能让策略发布流程同时提高账户 hard limit。
+生产硬风控配置与策略配置应使用不同权限。示例为了教学放在同一文件中，真实部署不能让策略发布流程同时提高账户硬限额。
 
 ## 27.15 一键演示应该讲一个故事
 
-优秀 demo 不是启动后滚动大量日志，而是用固定时间线展示系统判断：
+好的演示不是启动后滚动大量日志，而是用固定时间线展示系统看见了什么、作出了什么判断：
 
 ```text
-00:00 snapshot + deltas -> book Healthy(seq=...)
-00:01 fixed quote intent -> hard risk Allow
-00:02 fill-before-ack -> OMS Filled + ledger/equity update
-00:03 late ack + duplicate fill -> state does not regress or double count
-00:04 missing delta -> book Invalid -> hard risk rejects
-00:05 cancel timeout -> OMS Uncertain + venue PendingCancel
-00:06 reconciliation/cancel ack -> both sides Cancelled
-00:07 replay ends -> ledger checksum + equity_closed=true
+00:00  快照与增量接上 -> 订单簿健康可用
+00:01  固定报价意图 -> 硬风控允许
+00:02  成交先于接受确认 -> 订单已成交，账本和权益更新
+00:03  迟到确认与重复成交 -> 状态不倒退，也不重复记账
+00:04  缺少一条增量 -> 订单簿不可用，硬风控拒绝新增风险
+00:05  撤单超时 -> 订单状态未知，交易所侧仍可能等待撤单
+00:06  对账并收到撤单确认 -> 两侧状态一致为已撤销
+00:07  回放结束 -> 账本校验值稳定，权益关系闭合
 ```
 
-仓库当前 demo 已实现这条最小时间线。下一步应把硬编码输入替换成配置与 fixture，并将详细 payload 写入结构化文件；演示结束生成 Markdown/HTML 摘要，使读者不需要安装 dashboard 也能理解结果。
+仓库当前演示已经实现这条最小时间线。下一步应把写死在代码中的输入替换成配置和固定样本，把详细原始消息写入结构化文件，并在结束时生成 Markdown 或 HTML 摘要，让读者不安装监控面板也能理解结果。
 
-准备三种长度：3 分钟展示目标和异常，10 分钟讲架构与证据，20 分钟深入 queue、OMS、risk、replay 和性能取舍。
+可以准备三种演示长度：3 分钟展示目标与异常，10 分钟讲系统结构与证据，20 分钟深入排队、订单状态、风控、回放和性能取舍。
 
-## 27.16 四次迭代，而不是一次大爆炸
+## 27.16 分四次做出可运行版本
 
-**迭代一：可信行情。** 只做一 venue、一 instrument、离线 fixture。交付 book 状态、gap 测试和 checksum。
+**迭代一：可信行情。** 只做一家交易所、一个产品和一组离线固定样本。交付订单簿状态、序号缺口测试和最终校验值。
 
-**迭代二：可信订单。** 加模拟 venue、OMS、execution ledger 和故障序列，不做复杂策略。用固定意图驱动状态机。
+**迭代二：可信订单。** 加入模拟交易所、订单管理、成交账本和故障序列，暂时不做复杂策略。用固定订单意图驱动状态机。
 
-**迭代三：策略与研究。** 加 fair/quote/hard risk、三种 fill model、latency/fee/funding 和 PnL 对账。
+**迭代三：策略与研究。** 加入公允价、报价、硬风控、三种成交模型、延迟、费用、资金费和盈亏对账。
 
-**迭代四：生产证据。** 加 benchmark、metrics、structured logs、persistence/restart、runbook 和一键 demo。
+**迭代四：生产证据。** 加入性能基准、监控指标、结构化日志、持久化与重启、处置手册和一键演示。
 
 每次迭代结束都能独立运行，不把测试和文档推迟到最后。若时间不够，完整的前两次迭代比五个半成品更有价值。
 
@@ -360,16 +375,16 @@ seed = 42
 
 邀请别人评审时不要只问“代码怎么样”，给出可以证伪设计的问题：
 
-- 删除任意一个 market delta 后，是否存在继续报价的路径？
-- 重复任意 execution event，cash/position 是否变化？
-- 在每个 await/持久化边界 kill 进程，恢复结果是什么？
-- 策略是否能构造绕过 hard risk 的 gateway request？
-- 模拟 fill 是否使用了订单到达前的未来市场事件？
-- PnL residual 非零时，系统是否仍报告策略成功？
-- queue 满、磁盘慢和指标 sink 失败会影响哪条资金路径？
-- README 的性能和收益数字是否能一条命令复现？
+- 删除任意一条市场增量后，是否还有路径继续报价？
+- 重复任意一笔成交事件，现金和仓位是否再次变化？
+- 在每个异步等待点和持久化边界强制终止进程，恢复结果是什么？
+- 策略能否构造绕过硬风控的交易所请求？
+- 模拟成交是否使用了订单到达前的未来市场事件？
+- 盈亏仍有未解释差额时，系统是否仍报告策略成功？
+- 队列满、磁盘慢和指标存储失败会影响哪条资金路径？
+- 项目说明中的性能和收益数字，是否能用一条命令复现？
 
-把评审发现转换成 failing test 或明确设计记录。口头提醒很快会丢失。
+把评审发现转换成一个当前会失败的测试，或一份明确的设计记录。口头提醒很快会丢失。
 
 ## 27.18 项目验收定义
 
@@ -377,9 +392,17 @@ seed = 42
 
 - 一条命令可离线运行，结果可复现。
 - 领域类型、状态机、硬风控和账本有明确不变量。
-- gap、乱序、重复、超时和重启有测试。
-- PnL 会计闭合，研究假设与偏差可见。
+- 序号缺口、乱序、重复、超时和重启有测试。
+- 盈亏账务闭合，研究假设与偏差可见。
 - 性能数字带环境、负载、分位数和正确性。
-- 演示能展示失败和恢复，不只展示 happy path。
+- 演示能展示失败和恢复，不只展示正常路径。
 
 这个项目可以证明你具备交易工程的基础判断力，但不能替代真实资金、执行校准和生产值班经验。
+
+## 27.19 回顾与下一章
+
+贯穿项目的价值不在模块数量，而在同一组业务规则能够穿过完整路径：原始行情形成有效订单簿，策略输出带输入版本的订单意图，硬风控独立决定，模拟器只产生交易所消息，订单管理系统整理订单状态，账本保证同一成交只入账一次，历史回放与对账最终得到相同校验值。
+
+六个里程碑应逐个形成可运行版本。时间不足时，可以缩小到一家交易所、一个产品、固定策略和短样本，但不要删除序号缺口、超时、重复、重启、账本闭合和已知限制。一个能够稳定演示失败和恢复的小闭环，比功能繁多却无法解释状态的项目更有价值。
+
+下一章不再扩展系统功能，而是帮助你把现有证据安排成连续 24 周计划，并转换成作品集、面试叙述和入职后的学习路径。项目中的每个结论都应保留可复现命令与适用边界。

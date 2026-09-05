@@ -1,24 +1,39 @@
 # 第 11 章 Tokio 与网络编程：连接实时市场
 
-上一章建立并发、异步和背压原则，本章把它们放进网络连接：TCP、HTTP、WebSocket、Tokio task、timeout、heartbeat、重连和测试。示例不连接真实账户。
+上一章建立并发、异步和背压原则，本章把它们放进网络连接：怎样建立连接、交换消息、判断数据停止、超时、重连和测试。示例不连接真实账户。
 
-> **学习导航**　前置：第 10 章的 Future、channel、timeout 与取消语义｜目标：构建有监督、可重连、分层超时的离线网络任务｜预计：10–14 小时｜产出：scripted source、freshness 监控、重连 policy 和签名向量
+> **学习导航**
+>
+> - 开始前：知道 Future、消息通道、超时和取消分别表示什么。
+> - 这一章学会：管理连接、心跳、超时、重连和安全关闭。
+> - 大约需要：10–14 小时。
+> - 做完留下：可控消息源、新鲜度监控、重连规则和签名测试样本。
 
-> **章节边界：** 本章假定第 10 章的 owner、背压、取消和 shutdown policy 已经确定，只负责 transport 生命周期和 wire I/O。连接任务产生带证据的事件与退出原因，不拥有订单簿、策略或 OMS 权威状态。
+> **开章场景：连接还在，行情却停了**
+>
+> 凌晨 2 点，程序显示网络连接正常，心跳消息也在继续，但 BTC 行情已经 12 秒没有更新。此时策略若只看“连接未断”，就可能拿旧价格继续下单。重连也不等于恢复：程序还要重新订阅，并取得一份能与后续更新接上的完整状态。
+>
+> Tokio 是 Rust 中常用的异步运行环境，可以同时管理连接、读写、计时和关闭信号。**本章要解决的是：怎样区分连接存活、数据新鲜和业务状态可用，并把超时、重连与安全关闭写成明确流程。**
 
-## 11.1 从 TCP 到 WebSocket
+> **第一次阅读建议**
+>
+> 先读 11.1、11.3、11.5 至 11.7，把一次连接看成“建立连接、确认订阅、持续收消息、发现异常、重新同步”的完整过程。再读 11.9 和 11.11，理解为什么订单写入要有统一出口、错误要按行动分类。`select!`、签名细节和网络故障样本可在实际写代码时细读。
 
-常见交易所接口：
+> **章节边界：** 本章假定第 10 章已经明确状态负责人、背压、取消和关闭规则，只负责网络连接与原始消息收发。连接任务报告事件和退出原因，不负责修改订单簿、策略或 OMS 的权威状态。
 
-- REST/HTTP：metadata、snapshot、查询、部分交易命令。
-- WebSocket：持续公开行情、私有订单/账户事件，也可能支持下单。
-- FIX/专有 TCP：机构或低延迟接口，语义依 venue。
+## 11.1 交易系统常见的三种网络接口
 
-WebSocket 建立在 TCP 之上。TCP 保证字节有序可靠传输，但不保证应用消息新鲜、不保证服务端业务正常，也不会替你恢复订阅状态。TLS 提供传输加密与身份验证，仍需正确校验证书和主机名。
+接口是两个系统约定的沟通方式。交易所常见三类：
 
-## 11.2 Tokio Runtime
+- REST/HTTP：适合一次请求、一次响应，例如查询产品规则、快照和账户状态。
+- WebSocket：建立长连接后持续收发消息，常用于公开行情和私有订单事件。
+- FIX 或专有 TCP：面向机构或低延迟场景的协议，具体含义由交易所规定。
 
-Tokio runtime 调度 Future 并驱动非阻塞 I/O：
+WebSocket 建立在 TCP 连接之上。TCP 会按顺序可靠传输字节，但不保证业务消息仍然新鲜，也不保证服务端功能正常。TLS 为传输加密并验证服务器身份，但程序仍需正确检查证书和主机名。
+
+## 11.2 Tokio 怎样安排异步任务
+
+Tokio 是 Rust 常用的异步运行库。它的 runtime（运行时）负责安排 Future，并在网络可以继续读写时唤醒相应任务：
 
 Tokio 的 runtime、关闭和测试细节可从[附录 E](appendix-e-references.md)中的官方入口继续核对；书中 `rust,ignore` 异步片段在 `book/code/tests/tokio_examples.rs` 有可编译版本。
 
@@ -50,7 +65,7 @@ connect with timeout
 
 连接任务不应同时拥有 order book 和策略。它负责 transport 生命周期，把 wire message 送进有界 decoder/synchronizer 路径。
 
-## 11.4 `select!` 管理多个事件源
+## 11.4 同时等待消息、心跳和关闭信号
 
 ```rust,ignore
 loop {
@@ -70,11 +85,11 @@ loop {
 }
 ```
 
-`biased` 改变分支轮询优先级，要说明饥饿风险。被选中分支完成后，其他分支 Future 会被取消/drop，所以每个操作必须检查 cancel safety。
+`biased` 会改变分支轮询优先级，要说明低优先级分支是否可能长期得不到执行。一个分支完成后，其他尚未完成的操作通常会被取消，因此每个操作都要检查“中途停止后能否安全恢复”。
 
-不要把完整“写订单 + 等 ack”作为一个随时可丢弃的 Future 而没有 durable 状态。timeout 后远端事实未知。
+不要把完整的“写订单 + 等待确认”当成一个可以随时丢弃的异步操作，却不留下持久记录。等待超时后，交易所是否已经接受订单仍然未知。
 
-## 11.5 Timeout 分层
+## 11.5 不同等待需要不同超时
 
 至少区分：
 
@@ -85,7 +100,7 @@ loop {
 - HTTP request/response timeout。
 - 订单业务确认期限。
 
-单一 `request_timeout=5s` 无法表达这些风险。transport timeout 是本地等待边界，业务状态由协议事件和对账决定。
+单一 `request_timeout=5s` 无法表达这些风险。网络超时只说明本地等待结束，订单等业务状态仍要由后续消息和对账决定。
 
 ```rust,ignore
 let response = tokio::time::timeout(
@@ -100,9 +115,9 @@ match response {
 }
 ```
 
-公开 metadata GET 通常可安全重试；增险订单不能只按 HTTP method 或网络错误机械重试。
+查询公开产品说明的 GET 请求通常可以安全重试；可能增加仓位的订单，不能只根据 HTTP 方法或网络错误机械重发。
 
-## 11.6 Heartbeat 的三个层次
+## 11.6 心跳正常不等于行情正常
 
 1. TCP/socket 仍连接。
 2. WebSocket ping/pong 或 venue heartbeat 正常。
@@ -112,7 +127,7 @@ match response {
 
 分别记录 last-byte、last-frame、last-valid-event 和 last-book-update。风险使用与策略输入对应的 freshness。
 
-## 11.7 重连与退避
+## 11.7 重连不能立即恢复交易
 
 指数退避带 jitter：
 
@@ -124,7 +139,7 @@ delay = min(max_delay, base * 2^attempt) * random_jitter
 
 重连成功只恢复 transport。之后还要重新认证、订阅、snapshot/delta 同步、私有状态对账和 trading approval。旧 book 默认 invalid。
 
-## 11.8 HTTP Client 复用
+## 11.8 复用 HTTP 客户端
 
 HTTP client/TLS connection pool 应复用，避免每请求握手。配置：
 
@@ -137,7 +152,7 @@ HTTP client/TLS connection pool 应复用，避免每请求握手。配置：
 
 不要在 event loop 中无限并发 query。一次故障可能同时触发成百上千个 reconciliation 请求，必须按 venue budget 调度并保留紧急动作容量。
 
-## 11.9 WebSocket 写路径
+## 11.9 所有网络写入经过同一出口
 
 多个组件不应直接共享一个 socket writer。使用单一 writer task 和有界命令队列，定义优先级：
 
@@ -162,7 +177,7 @@ low:     nonessential query/subscription refresh
 
 不要在 shell history 打印 secret，也不要把完整签名请求写普通日志。
 
-## 11.11 网络错误分类
+## 11.11 错误分类决定下一步行动
 
 - connect/DNS/TLS：通常可退避重连。
 - protocol/schema：保留 payload，可能需要 adapter 升级。
@@ -173,7 +188,7 @@ low:     nonessential query/subscription refresh
 
 错误分类映射行动，而不是所有错误统一 `retry()`。
 
-## 11.12 网络测试
+## 11.12 用可控故障测试网络代码
 
 离线 scripted server/transport 可以产生：
 
@@ -196,3 +211,11 @@ low:     nonessential query/subscription refresh
 5. 写一个固定签名 test vector，secret 不出现在 Debug 输出。
 
 本章完成标准：能设计受监督、有界、可取消和可重连的网络任务，并明确 timeout 与远端业务状态的差别。
+
+## 11.14 回顾与下一章
+
+一个可靠连接任务有明确生命周期：连接、握手、认证、订阅确认、持续读取、报告退出原因，再由 supervisor 决定退避与重连。socket 活着、ping/pong 正常和业务事件新鲜是三种不同健康状态，不能用一个 `connected` 布尔值代替。
+
+网络错误应按下一步行动分类。公开幂等查询也许可以退避重试，认证错误应停止相关能力，schema 错误应保留 raw payload，而订单写入后的 timeout 必须标记为未知并对账。重连只恢复 transport；行情仍需 resync，私有状态仍需 reconcile，交易恢复仍需 gate。
+
+下一章开始测量这条路径。只有先固定消息语义、正确性 checksum、队列和 workload，p99 或吞吐才具有可比较含义；否则 benchmark 很可能只证明省略了必要工作。

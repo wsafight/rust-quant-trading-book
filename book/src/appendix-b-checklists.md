@@ -2,6 +2,8 @@
 
 检查清单不能替代设计，但可以阻止在高压操作中遗漏已知步骤。阈值和规则应由具体产品与系统配置提供。
 
+第一次阅读不需要逐条掌握本附录。做到某个阶段检查点、准备接入交易所或排查事故时，再打开对应清单逐项确认；看不懂某一项时，先回到正文查清它保护的风险，再决定是否适用于当前项目。
+
 ## B.1 代码提交
 
 - `cargo fmt --check`、`cargo clippy -- -D warnings`、`cargo test` 通过。
@@ -12,7 +14,7 @@
 - 性能改动附正确性 checksum 和相同 workload 对照。
 - `unsafe` 有最小封装、safety invariant 和专项验证。
 
-## B.2 Venue 接入
+## B.2 交易所接入
 
 - instrument/product/settlement/multiplier 已核验。
 - tick、lot、min qty/notional 与方向舍入有 fixture。
@@ -25,7 +27,7 @@
 - fee、funding、mark/index、margin tier 有版本和访问日期。
 - testnet 与 production 差异已记录。
 
-## B.3 启动与 Trading Readiness
+## B.3 启动与交易就绪
 
 - 配置/schema/version/环境通过校验。
 - API key 权限、IP 和账户范围正确。
@@ -37,7 +39,7 @@
 - 无未处置 unknown/uncertain order，或已计入限制。
 - 先 shadow/risk-off，显式审批后 enable。
 
-## B.4 Pre-trade Hard Risk
+## B.4 下单前硬风控
 
 - trading enable 与 kill state。
 - venue/instrument/strategy/account 状态。
@@ -77,7 +79,7 @@
 - 优化前后使用同一输入和正确性 checksum。
 - 网络/venue/模拟边界明确。
 
-## B.7 发布与 Canary
+## B.7 发布与小规模灰度
 
 - offline replay、fixture contract 和故障测试通过。
 - shadow 决策与旧版本/预期差异已解释。

@@ -1,56 +1,77 @@
-# 第 19 章 交易所协议与 Adapter 设计
+# 第 19 章 交易所协议与适配器设计
 
-第 18 章构建公开行情，本章扩展到完整 venue adapter：instrument metadata、请求/响应、订单能力、错误、限频、时钟与 schema evolution。目标是统一领域语言，同时保留交易所差异。
+第 18 章构建了公开行情链路，本章进一步处理完整的交易所接口：产品规则、请求与响应、订单功能、错误、请求频率、时钟和协议格式变化。目标是让上层代码使用统一语言，同时保留会影响订单和资金的交易所差异。
 
-> **学习导航**　前置：第 11、15、18 章的网络、metadata 与行情同步｜目标：设计保留 venue 差异的 adapter、限频和稳定身份｜预计：12–16 小时｜产出：capability matrix、契约 fixture、client ID 与调度器
+> **学习导航**
+>
+> - 开始前：理解网络生命周期、产品规则和行情同步。
+> - 这一章学会：把不同交易所的字段和规则安全翻译成内部含义。
+> - 大约需要：12–16 小时。
+> - 做完留下：能力对照表、协议样本、稳定订单编号和请求调度器。
 
-> **章节边界：** 本章止于“把 wire 事实可靠地翻译成版本化领域事件和请求结果”：schema、精度、capability、签名、错误与限频都属于 adapter。跨 REST/WS 事件决定订单权威状态、持久化投影和重启对账属于第 21 章。
+> **开章场景：两家交易所都写“数量 10”**
+>
+> 在交易所 A，“数量 10”表示 10 个币；在交易所 B，它表示 10 张合约，每张合约又代表固定面值。两边还都提供“只挂单”选项，但一家会拒绝立即成交的订单，另一家可能自动调整价格。若程序只把同名字段直接互相复制，订单价值和执行结果都会出错。
+>
+> 适配器（adapter）负责把某家交易所的字段、单位、能力和错误忠实转换成系统内部含义。**本章要解决的是：哪些差异可以统一，哪些必须明确保留，以及怎样避免上层代码误以为所有交易所规则相同。**
 
-真实 adapter 的规则必须从[附录 E](appendix-e-references.md)列出的官方入口继续定位，并按[附录 D](appendix-d-versioning.md)保存具体页面、访问日期和 fixture。
+> **第一次阅读建议**
+>
+> 先读 19.1 至 19.9，理解“原始字段不能直接进入交易逻辑”以及“同名功能可能含义不同”。时钟、协议升级和发布流程可以第二次再读。第一次阅读不要求记住错误类别的英文代码名。
 
-## 19.1 三层模型
+> **章节边界：** 本章只负责把交易所的原始消息可靠地转换成带版本的内部事件和请求结果。至于确认、成交和查询消息到达后，订单最终应处于什么状态，由第 21 章的订单管理系统处理。
+
+真实适配器的规则必须来自交易所官方文档和实际消息，并保存访问日期与固定测试样本。相关来源入口见[附录 E](appendix-e-references.md)，版本记录方式见[附录 D](appendix-d-versioning.md)。
+
+## 19.1 为什么要分成三层
+
+一条交易所消息进入系统后，通常经过三种表示。分层的目的，是不让某家交易所的字段名和模糊状态扩散到全部业务代码中。
 
 ```text
-Wire model
-  venue JSON/binary field, exact string, optionality
+原始协议层（wire model）
+  忠实保存交易所 JSON 或二进制字段、原始字符串以及字段是否缺失
       |
       v
-Adapter model
-  venue-specific validation, capability, sequence, error mapping
+适配转换层（adapter model）
+  按该交易所规则检查单位、功能、序号和错误
       |
       v
-Domain model
-  PriceTicks, QtyLots, OrderIntent, Execution, Position
+内部业务层（domain model）
+  明确的价格、数量、订单意图、成交和仓位
 ```
 
-wire struct 应贴近协议，领域 struct 应贴近业务。不要让 serde field name、venue symbol 或含糊状态字符串穿过整个系统。
+原始协议结构应忠实反映收到的消息，内部业务结构应反映系统真正关心的含义。不要让序列化字段名、交易所产品代码或含糊的状态字符串穿过整个系统。
 
-## 19.2 Metadata 是运行时依赖
+## 19.2 产品规则是运行时输入
+
+产品元数据（instrument metadata）是交易所为某个可交易产品规定的规则。它不是只在开发时查一次的说明书，因为交易所可能新增产品、调整最小下单量或改变产品状态。
 
 下单前需要：
 
-- instrument 是否 active。
-- product/settlement/multiplier。
-- tick、lot、min/max qty/notional。
-- order type/TIF/post-only/reduce-only capability。
-- position mode 和 margin mode。
+- 产品当前是否允许交易。
+- 它属于现货还是合约、用什么资产结算，以及每张合约代表多少。
+- 最小价格变动、最小数量，以及订单数量和名义价值上下限。
+- 支持哪些订单类型、有效时间、“只挂单”和“只减仓”等功能。
+- 使用单向还是双向持仓，以及采用哪种保证金模式。
 
-metadata 带 version/effective time。策略配置引用内部 `InstrumentId + metadata_version`，避免 symbol 被复用或规则改变后继续使用旧精度。
+产品规则必须带版本和生效时间。策略配置应引用内部产品编号与规则版本，避免交易所重复使用产品代码，或规则改变后程序仍按旧精度下单。
 
-## 19.3 严格转换
+## 19.3 小数和单位必须严格转换
 
-adapter 负责 decimal/string 与 ticks/lots 转换。方向舍入示例：
+交易所常用小数字符串表示价格和数量，内部系统则使用最小价格单位和最小数量单位。适配器负责二者之间的严格转换。不同订单方向的舍入方式也不同：
 
 ```text
-passive bid:  向下到 tick，避免意外跨价
-passive ask:  向上到 tick
-aggressive buy limit: 可能向上以保证覆盖，但受 price collar
-aggressive sell limit: 可能向下
+挂在订单簿上的买单：向下舍入到合法价格，避免意外立即成交
+挂在订单簿上的卖单：向上舍入到合法价格
+希望立即成交的限价买单：可能向上舍入，但不能超过价格保护范围
+希望立即成交的限价卖单：可能向下舍入
 ```
 
-实际 policy 由订单意图明确携带，不能让一个通用 `round()` 猜方向。转换后再次检查 min notional、limit 和 post-only。
+实际舍入规则应由订单意图明确指定，不能让一个通用的 `round()` 函数猜测。转换后还要重新检查最小订单价值、价格限制和“只挂单”要求，因为舍入本身可能改变订单是否合法。
 
-## 19.4 Capability 而不是假统一
+## 19.4 用功能清单保留交易所差异
+
+功能能力（capability）表示某家交易所是否支持一项操作，以及具体怎样支持。例如“修改订单”可能是原地修改，也可能实际执行“先撤销、再新建”。先用代码记录是否支持，再在规则说明中保留更细含义。
 
 ```rust
 #[derive(Debug, Clone, Copy)]
@@ -78,125 +99,139 @@ fn main() {
 }
 ```
 
-启动时策略声明 required capabilities，adapter 不满足就拒绝启用。不要等第一笔生产订单 reject 才发现。
+启动时，策略先声明自己必须使用哪些功能；适配器无法满足时，系统应拒绝启用。不要等第一张真实订单被交易所拒绝后才发现能力缺失。
 
-即使 capability 为 true，也要记录语义。例如 `atomic_amend` 是否保留 order ID/queue、quantity 是 total 还是 remaining。
+即使某项能力标记为支持，也要写清具体含义。例如原地修改是否保留订单编号和排队位置，修改后的数量表示订单总量还是剩余量。
 
-## 19.5 请求生命周期
+## 19.5 一次请求经过哪些步骤
 
 ```text
-Domain intent
--> adapter validation/rounding
--> durable client ID/request representation
--> signing/encoding
--> transport write
--> request ack / order event / query result
--> normalized domain event
+内部订单意图
+-> 适配器检查并舍入
+-> 生成重启后仍可识别的本地订单编号和请求记录
+-> 签名并编码成交易所格式
+-> 写入网络连接
+-> 收到请求确认、订单事件或查询结果
+-> 转换成内部业务事件
 ```
 
-request ack 可能只表示网关收到，不表示订单已进入 book；REST response 和私有 WS event 可能乱序。adapter 保留 venue timestamp、status、raw code 和 original ID，OMS 决定状态。
+请求确认可能只表示交易所网关收到了消息，不代表订单已经进入订单簿。HTTP 响应和私有 WebSocket 订单事件也可能乱序到达。适配器应保留交易所时间、原始状态码和订单编号，订单管理系统再根据全部证据决定状态。
 
-## 19.6 Client Order ID
+## 19.6 本地订单编号为什么必须稳定
 
-一个好 client ID：
+本地订单编号（client order ID）由自己的系统创建，用于把本地意图、网络请求和交易所订单对应起来。一条请求超时或进程重启后，这个编号尤其重要。
 
-- 在 venue 限制长度和字符集内。
+一个好的本地订单编号应当：
+
+- 符合交易所限制的长度和字符集。
 - 在规定作用域内稳定唯一。
 - 崩溃重启后不会重用。
-- 同一 intent 重发时保持不变。
+- 同一订单意图重发时保持不变。
 - 不泄露敏感策略信息。
 
-可以由环境/账户 namespace、持久 sequence 和 checksum 编码。不要只用当前毫秒时间，多进程/时钟回退会碰撞。
+编号可以组合运行环境、账户范围、持久化递增序号和校验值。不要只使用当前毫秒时间，因为多个进程可能在同一毫秒创建订单，系统时钟也可能向后调整。
 
-## 19.7 Execution ID 作用域
+## 19.7 成交编号在哪里唯一
 
-官方字段 `tradeId` 可能只在 instrument、order、account 或 session 内唯一。构造 execution key 前用文档和 fixture 验证：
+成交编号（execution ID 或 trade ID）用于识别一笔已经发生的成交，账本依靠它阻止重复记账。但“编号相同”只有在明确范围内才有意义。
+
+交易所字段 `tradeId` 可能只在某个产品、订单、账户或连接会话内唯一。构造成交唯一键之前，要用官方文档和固定样本确认范围：
 
 ```text
-(venue, account, instrument, execution_id)
+(交易所, 账户, 产品, 成交编号)
 ```
 
-若无稳定 execution ID，需要结合 order cumulative fill、event sequence 和 reconciliation snapshot 设计替代，但应承认幂等能力更弱。
+若交易所没有稳定的成交编号，就需要结合订单累计成交量、事件序号和对账快照设计替代规则，同时明确承认：这种方案识别重复成交的能力更弱。
 
 ## 19.8 错误映射
 
-wire code 保留原值，同时映射到可行动类别：
+适配器应保留交易所原始错误码，同时把它归入系统能够采取行动的类别。表中的英文名适合作为代码枚举，右侧先说明其业务含义：
 
-| 类别 | 动作 |
+| 代码类别 | 中文含义与动作 |
 | --- | --- |
-| InvalidRequest | 修复代码/配置，不重试同请求 |
-| ExchangeReject | 记录业务 reason，更新策略/风控 |
-| RateLimited | 按 server hint 调度和降载 |
-| Auth/Permission | 停止相关交易并 page |
-| RetryableTransport | 幂等前提下退避 |
-| StateUncertain | 查询/对账，计最坏暴露 |
-| ProtocolInvariant | feed/venue risk-off，保留证据 |
+| `InvalidRequest` | 请求本身无效；修复代码或配置，不原样重试 |
+| `ExchangeReject` | 交易所明确拒绝；记录原因并交给策略或风控处理 |
+| `RateLimited` | 请求额度已用完；按服务端提示降速和重新调度 |
+| `Auth/Permission` | 认证或权限错误；停止相关交易并通知值班人员 |
+| `RetryableTransport` | 临时网络失败；只在请求可安全重复的前提下退避重试 |
+| `StateUncertain` | 远端状态未知；查询和对账，并按最坏风险计算 |
+| `ProtocolInvariant` | 协议出现无法解释的情况；停止相关行情或交易并保留证据 |
 
-未知 error code 不映射成“可重试”。默认保守并告警 schema/capability 变化。
+未知错误码不能默认映射为“可以重试”。更稳妥的做法是停止扩大影响范围，保留原始消息，并检查协议格式或功能规则是否变化。
 
-## 19.9 Rate Limit 模型
+## 19.9 请求次数是一种有限预算
 
-venue 可能同时限制：
+交易所会限制一段时间内允许发送的请求数量，这叫请求频率限制（rate limit）。限制通常不是一个简单的“每秒多少次”，而是多个维度同时生效：
 
-- IP request weight。
-- API key/order count。
-- endpoint 权重和滑动窗口。
-- WebSocket connection/subscription/message。
-- account 或 subaccount 下单率。
+- 同一网络地址的请求权重。
+- 同一 API 密钥的请求数或下单数。
+- 不同接口各自的权重和滚动时间窗口。
+- WebSocket 连接、订阅和消息数量。
+- 主账户或子账户的下单速度。
 
-本地 scheduler 维护估计 budget，响应 header/event 校正。队列按风险优先级调度，为 cancel/query 保留容量。服务端才是最终事实，收到 429 后不能通过并行重试放大。
+本地请求调度器维护剩余额度估计，再根据响应头或事件进行修正。队列应按风险优先级安排请求，并为撤单和查询保留容量。交易所服务端才是最终裁决者；收到 HTTP 429 限流响应后，不能开启更多并行重试把问题放大。
 
 ## 19.10 时钟同步
 
-认证常要求 timestamp 在 receive window 内。实现：
+交易所认证通常要求请求时间落在允许接收的时间窗口内。实现时需要：
 
-- 定期测 venue server time 与本地 wall clock offset。
-- 使用 monotonic clock 跟踪 offset 样本年龄。
-- offset/uncertainty 超阈停止发送增险请求。
-- 区分 wall clock 用于协议，monotonic 用于 duration。
+- 定期比较交易所服务器时间与本机日历时间，估计二者偏差。
+- 使用单调时钟记录这次偏差测量已经过去多久。
+- 当偏差或测量不确定性超过阈值时，停止发送增加风险的请求。
+- 日历时间用于填写协议时间戳，单调时钟用于计算经过了多久。
 
-自动扩大 receive window 可能掩盖时钟故障并降低重放保护，不能作为唯一修复。
+自动扩大允许接收窗口可能掩盖本机时钟故障，也会削弱防止旧请求被重复利用的保护，因此不能作为唯一修复办法。
 
-## 19.11 Schema Evolution
+## 19.11 交易所消息格式发生变化时
 
-JSON 新增未知字段通常应兼容；必需字段缺失、类型改变或 enum 出现新值则要显式处理。不要把未知 order status 静默映射为 open/cancelled。
+消息结构随时间变化，称为协议格式演进（schema evolution）。新增一个可忽略字段通常可以兼容，但关键字段缺失、字段类型改变或状态出现新取值，都可能改变业务含义。
+
+程序不能把未知订单状态悄悄当成“活动中”或“已撤销”。它应保留原始值，停止作出无法证明的状态转换，并通过告警推动规则更新。
 
 保留：
 
-- raw payload。
-- wire schema/adapter version。
-- unknown enum/error counter。
-- 新旧 fixture 和 migration 结果。
+- 原始消息内容。
+- 原始协议结构版本与适配器版本。
+- 未知枚举值和未知错误码的计数。
+- 新旧固定样本及版本迁移结果。
 
-协议公告触发 metadata/adapter review，但实际 payload 仍是最终测试证据。
+交易所发布协议公告后，应复查产品规则和适配器；实际收到的消息仍是最终测试证据，因为文档和线上变化不一定同时发生。
 
-## 19.12 Contract Test
+## 19.12 用接口契约测试守住转换规则
 
-每项 capability 至少有：
+契约测试（contract test）检查适配器是否仍然遵守交易所与内部系统之间约定的输入和输出。每项功能至少要覆盖：
 
-- encode request golden test，包括签名输入而非真实 secret。
-- decode success/error/unknown fixture。
-- price/qty 边界与 rounding。
-- batch partial success。
-- ack/private event 乱序。
-- rate-limit header 和 429。
-- query pagination 与时间范围。
-- reconnect/session/client ID 作用域。
+- 请求编码的固定预期测试，包括签名前的输入，但不包含真实密钥。
+- 成功、失败和未知消息的解析样本。
+- 价格和数量边界，以及不同方向的舍入。
+- 批量请求中只有部分项目成功的情况。
+- 请求确认与私有订单事件乱序到达。
+- 请求额度响应头与 HTTP 429。
+- 查询结果有多页以及查询时间范围边界。
+- 重连后会话变化，以及本地订单编号的有效范围。
 
-离线 fixture 稳定运行；最小在线 test 定期验证当前 venue，但输出和权限受控。
+离线固定样本应在每次改动时稳定运行。还可以用权限受限的最小在线测试定期确认交易所当前行为，但不能让测试拥有不必要的下单或资金权限。
 
-## 19.13 Adapter 版本发布
+## 19.13 怎样逐步发布新版适配器
 
-先 replay 历史 raw payload，比较 normalized event diff；再 shadow 新旧 adapter，观察 unknown/error/metadata 差异；测试网验证认证与命令格式；生产 canary 使用最小范围。
+先用历史原始消息回放新版本，比较新旧版本产生的内部事件；再让新旧适配器并行读取相同实时消息，但只由旧版本实际交易，这叫影子运行（shadow）。随后在测试网验证认证和命令格式，最后才在生产环境用单个产品、最小数量进行小范围试运行（canary）。
 
-回滚 adapter 时注意新版本已经发出的订单仍在 venue。旧版本必须能识别这些 client/order ID 和状态，或先完成撤单/对账。
+回滚适配器时，新版本已经发出的订单仍可能留在交易所。旧版本必须能够识别这些本地编号、交易所编号和状态；否则应先撤单并完成对账，不能只替换进程文件。
 
 ## 19.14 本章练习
 
-1. 为两个假 venue 建 capability matrix，找出不能统一的语义。
-2. 设计稳定 client ID，模拟重启和多进程碰撞。
-3. 用 fixture 测 price/qty 方向舍入和 min notional。
-4. 建一个多维 rate-limit scheduler，预留 cancel budget。
-5. 模拟未知 order status，验证系统保守降级而非猜测。
+1. 为两个虚构交易所建立功能对照表，找出不能统一的含义。
+2. 设计稳定的本地订单编号，模拟重启和多个进程同时生成编号。
+3. 用固定样本测试价格、数量的方向舍入和最小订单价值。
+4. 建立多维请求额度调度器，为撤单保留容量。
+5. 模拟未知订单状态，验证系统会保守降级，而不是猜测其含义。
 
-本章完成标准：adapter 的每个危险规则都能追到版本化文档、payload 和测试；领域接口统一但不隐藏 venue 语义。
+本章完成标准：适配器中每条可能影响订单或资金的规则，都能追溯到带版本的文档、原始消息和测试；内部接口保持统一，但不隐藏交易所差异。
+
+## 19.15 回顾与下一章
+
+适配器是一道隔离边界：原始协议层忠实保存交易所消息，适配转换层处理版本、精度、功能差异和错误，内部业务层只接收含义已经明确的事件。统一接口的目标，是让上层依赖稳定概念，而不是抹掉“只挂单”、修改订单、编号范围或批量请求结果中的危险差异。
+
+产品规则是运行时输入，本地订单编号和成交编号是防止重复处理与完成对账的基础，请求额度则要为撤单和风险动作预留。一次请求返回只增加了一条本地证据；特别是请求已经写入网络后发生超时，适配器不能替订单管理系统猜测远端订单状态。
+
+下一章会使用一组冻结的公开行情样本，把这些原则变成可运行的契约测试。你会看到原始 JSON、小数精度、更新序号范围和最终订单簿，怎样在一条短处理路径中互相约束。

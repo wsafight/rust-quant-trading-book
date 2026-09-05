@@ -2,7 +2,22 @@
 
 第 13 章解释了市场微观结构，本章站在自己的订单视角：订单怎样进入队列、什么价格会成交、主动执行如何穿透深度、执行算法在优化什么。
 
-> **学习导航**　前置：第 9、13 章的订单簿与微观结构｜目标：建模订单生命周期、深度穿透、queue 与执行成本｜预计：10–12 小时｜产出：逐档 sweep、implementation shortfall 和 parent/child 执行模型
+> **学习导航**
+>
+> - 开始前：理解订单簿、价差和价格优先/时间优先。
+> - 这一章学会：选择订单方式，并计算为了完成交易实际付出的成本。
+> - 大约需要：10–12 小时。
+> - 做完留下：逐档成交计算、执行成本和大单拆分模型。
+
+> **开章场景：要买 100 个，但 101 元只卖 10 个**
+>
+> 你接到“买入 100 个”的任务。订单簿上 101 元只有 10 个，102 元有 30 个，103 元才有足够数量。直接下市价单可以很快完成，却会把后面的高价也买走；只在 101 元挂限价单，价格更好，却可能只成交一小部分，甚至完全错过。
+>
+> 交易目标必须变成具体的订单类型、价格、数量和时间安排。实际代价还包括价差、费用、市场冲击、等待和未完成风险。**本章要解决的是：怎样在成交速度、成交价格与完成概率之间做可解释的选择。**
+
+> **第一次阅读建议**
+>
+> 先读 14.1 至 14.5，再直接看 14.12 的完整执行例子，理解“发出订单、确认成交、仍可能成交、剩余任务”是不同状态。第一次不必记住所有执行算法；先会解释大订单为什么会吃掉多档价格，以及撤单尚未确认时为什么不能把数量立即重新下出去。
 
 ## 14.1 限价单与市价意图
 
@@ -10,18 +25,20 @@
 
 很多加密 venue 的“市价单”在实现上可能是带保护价格的 IOC、按 quote quantity 下单，或有最大滑点限制。不要只看 API 名；确认最终最差价格、数量语义和拒绝条件。
 
-## 14.2 Time in Force
+## 14.2 订单可以等待多久
 
-- GTC：保持直到成交或取消。
-- IOC：立即成交可得部分，其余取消。
-- FOK：立即全部成交，否则取消。
-- Post-only：只提供流动性；若会立即成交则拒绝或调整，规则不同。
+交易接口用 Time in Force（TIF）说明订单可以等待多久：
+
+- GTC：一直保留，直到成交或主动取消。
+- IOC：立即成交当时可得的部分，其余自动取消。
+- FOK：必须立即全部成交，否则全部取消。
+- Post-only：只允许作为 maker 挂单；若会立即成交，则拒绝或调整，具体规则因交易所而异。
 
 订单 type 与 TIF 的合法组合由 venue capability 决定。adapter 在发送前验证，而不是依赖 reject 发现配置错误。
 
-## 14.3 Price-Time 撮合
+## 14.3 交易所怎样决定谁先成交
 
-简化规则：价格更优优先；同价按进入顺序 FIFO。主动买单从最低 ask 开始，主动卖单从最高 bid 开始。
+简化规则是：价格更优的订单先成交；价格相同时，先到先得（FIFO）。主动买单从最低卖价开始，主动卖单从最高买价开始。
 
 ```text
 asks:
@@ -36,7 +53,9 @@ remaining ask at 102: 2
 
 实际 venue 可能采用 pro-rata、隐藏/iceberg、特殊优先级、自成交保护和批量撮合。matching engine 教学实现不能自动代表真实交易所。
 
-## 14.4 Sweep Cost 与 VWAP
+## 14.4 大订单会吃掉几档价格
+
+主动订单数量超过最优档时，会继续与后面的价格成交，这常称为扫过多档（sweep）。成交量加权平均价（VWAP）把每一档成交价按成交数量加权：
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,9 +140,9 @@ fn main() {
 
 深度不足不是“没有任何信息”：调用者仍需要已填数量、剩余数量和逐档结果，才能决定缩量、换 venue 或拒绝执行。非法档位与深度不足也必须是不同错误。L2 sweep 只使用可见静态深度；真实下单期间 book 会变化，其他参与者竞争同一深度，venue 还可能有隐藏数量和保护规则。
 
-## 14.5 Slippage 的参考点
+## 14.5 滑点必须说明和谁比较
 
-Slippage 必须说明相对什么：
+滑点（slippage）表示实际成交价相对某个参考价格的差异，因此必须说明参考点：
 
 - decision/arrival mid。
 - best quote at send time。
@@ -140,7 +159,7 @@ buy sign = +1, sell sign = -1
 
 正 signed cost 表示支付成本。不要和全书 signed markout 的“正值有利”约定混淆，字段名应明确 `cost` 或 `markout`。
 
-## 14.6 Maker 成交概率
+## 14.6 挂单能否成交取决于什么
 
 Maker fill 取决于：
 
@@ -152,7 +171,7 @@ Maker fill 取决于：
 
 提高报价激进程度通常增加 fill，也可能让 adverse selection 更差。目标不是最大 fill ratio，而是风险和成本后的条件收益。
 
-## 14.7 Cancel/Replace 的执行代价
+## 14.7 撤单再挂会付出什么代价
 
 频繁刷新会：
 
@@ -163,13 +182,13 @@ Maker fill 取决于：
 
 刷新太慢则 quote stale。研究 quote refresh 时联合比较 fill probability、markout、queue age、cancel RTT、reject 和 message budget。
 
-## 14.8 主动执行算法
+## 14.8 怎样把大任务拆成小订单
 
-- TWAP：按时间均匀切分，简单但忽略成交量变化。
-- VWAP：跟随预计市场成交量曲线。
-- POV：保持市场成交量的一定参与率。
-- Implementation Shortfall：在价格风险和冲击成本间动态权衡。
-- Liquidity seeking：在多个 venue/时点寻找可用流动性。
+- 时间加权（TWAP）：按时间均匀切分，简单但忽略市场成交量变化。
+- 成交量加权（VWAP）：跟随预计的市场成交量曲线。
+- 参与率（POV）：让自己的成交保持在市场成交量的一定比例。
+- 执行缺口（Implementation Shortfall）：在等待导致的价格风险和立即交易的冲击成本之间调整速度。
+- 寻找流动性（Liquidity seeking）：在多个交易所或时点寻找可用报价。
 
 算法不只决定切片大小，还要处理 urgency、limit price、venue selection、partial fill、cancel 和剩余任务风险。
 
@@ -188,7 +207,7 @@ Maker fill 取决于：
 
 “永远 maker”或“立即全部 taker”都不是通用最优。
 
-## 14.10 多 Venue 执行
+## 14.10 怎样在多个交易所之间选择
 
 Smart order routing 需要规范化：价格、fee、可见深度、最小订单、延迟、成功率和结算风险。表面最优价格可能因为更慢、fee 更高或资金不足而不是最佳目的地。
 
@@ -215,7 +234,7 @@ Smart order routing 需要规范化：价格、fee、可见深度、最小订单
 
 这说明执行任务不能只用 `target - confirmed_fill`；还要结合活动/不确定订单、订单类型和 overfill policy。
 
-## 14.13 Parent/Child 执行状态
+## 14.13 大任务与实际订单必须分开记录
 
 parent order 表示必须完成的业务任务，child order 才是发往 venue 的具体订单。两者不能共用一个 `remaining_qty`：child cancel 在途时，已经确认的成交、仍可能成交的数量和尚未分配的数量同时存在。
 
@@ -274,3 +293,11 @@ fee             = sum(child_qty * fill_price * 2 / 10,000)
 5. 用相同的 parent fixtures 比较 TWAP、POV 和立即执行，加入 opportunity cost 与 depth walk 后重新解释结果。
 
 本章完成标准：能从 order type、queue、latency、fee 和剩余任务解释执行结果，而不是只比较成交均价。
+
+## 14.16 回顾与下一章
+
+订单类型和 TIF 是失败语义，不是普通参数。market intent 需要价格保护，post-only 可能拒绝而不是等待，IOC 的未成交部分立即终止，cancel-replace 则可能失去 queue priority 并产生在途暴露。执行模型必须保留这些差异。
+
+评价执行不能只看成交均价。decision、arrival、mid、最终 benchmark 会回答不同问题；implementation shortfall 还需合并 fee、spread、depth walk、opportunity cost 和未完成任务。对 maker 策略，fill rate 与 markout 必须共同解释，否则提高成交率可能只是在吸收更多坏流量。
+
+下一章为订单加上产品合同。相同的 price 与 qty 在现货、线性合约和反向合约中会形成不同 notional、PnL、费用与保证金，因此执行结果必须绑定 instrument metadata 才能入账。
