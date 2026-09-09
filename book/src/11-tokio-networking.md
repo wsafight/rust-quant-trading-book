@@ -204,6 +204,8 @@ low:     nonessential query/subscription refresh
 
 ## 11.13 本章练习
 
+分层建议：第 1～2 题是基础题，第 3～4 题是组合题，第 5 题是工程题；所有练习默认使用本地可控服务。
+
 1. 用 Tokio 构建本地 scripted message source，不访问交易所。
 2. 分别监控 last-frame 和 last-valid-event，模拟前者正常后者 stale。
 3. 实现带 jitter 的 reconnect policy，并使用 fake clock 测试。
@@ -219,3 +221,14 @@ low:     nonessential query/subscription refresh
 网络错误应按下一步行动分类。公开幂等查询也许可以退避重试，认证错误应停止相关能力，schema 错误应保留 raw payload，而订单写入后的 timeout 必须标记为未知并对账。重连只恢复 transport；行情仍需 resync，私有状态仍需 reconcile，交易恢复仍需 gate。
 
 下一章开始测量这条路径。只有先固定消息语义、正确性 checksum、队列和 workload，p99 或吞吐才具有可比较含义；否则 benchmark 很可能只证明省略了必要工作。
+
+## 离开本章前：更新贯穿项目
+
+- **本章新增：** 可控连接源、heartbeat/freshness 分离、分层 timeout、退避重连和统一 writer 出口。
+- **本章修改的领域契约：** transport、subscription、valid-event freshness 和 trading readiness 分层；网络结果只能生成领域事件。
+- **本章新增的正常路径：** connect、handshake、subscribe、持续读取、heartbeat、监督退出和重连。
+- **本章新增的边界/故障：** ping 正常但业务 stale、订阅确认丢失、429、断线和写后超时。
+- **一键演示结果：** 本地 scripted transport 顺序触发正常、stale 与 reconnect，并输出每层健康状态。
+- **保留证据：** ping 正常但业务 stale、订阅确认丢失、429、断线重连和写后超时脚本。
+- **从此淘汰：** 单一 `connected` 状态、所有请求统一重试，以及多个组件直接并发写 socket。
+- **当前仍不能证明：** 协议实现符合某家真实 venue；第 19、20 章用版本化规则和 fixture 收窄。

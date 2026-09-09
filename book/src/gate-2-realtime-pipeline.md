@@ -101,3 +101,15 @@ benchmark 报告必须注明 release 模式、CPU/OS/Rust 版本、输入、样�
 若队列容量只是随手写的常数，回到第 10 章；若只报告平均耗时，回到第 12 章；若 gap 后仍能取 mid，回到第 9 章。
 
 通过后冻结 fixture、同步规则和性能基线。第三部分将基于这个 valid book 讨论价格、队列与成交，不再把协议缺口误当成市场信号。
+
+## 独立评审
+
+请评审者使用[检查点二评审脚本](appendix-h-review-scripts.md#h4-检查点二评审实时管线)，在实现者不知道具体注入位置的情况下删除一条 delta、制造 burst，并让 heartbeat 正常但业务数据停止。只有状态、指标和关闭结果都能解释时才通过。
+
+## 交给下一阶段的输入
+
+- versioned snapshot/delta fixture 和同步规则；
+- book reducer、状态转换日志和最终 checksum；
+- task/owner/channel 图与满载策略；
+- release workload、尾延迟和 queue-age 基线；
+- V2 标签或提交，以及 gap/burst/stale/close 评审记录。

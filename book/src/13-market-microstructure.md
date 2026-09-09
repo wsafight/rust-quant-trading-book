@@ -1,5 +1,7 @@
 # 第 13 章 市场微观结构：价格和成交怎样形成
 
+如果对期望、条件概率、相关性或“样本为什么不独立”仍然陌生，先阅读[附录 F：量化数学预备](appendix-f-math-primer.md)。理解成交条件如何改变样本，比提前使用复杂模型更重要。
+
 交易系统处理的不是一条脱离背景的价格曲线，而是一组有排队规则、有费用并且由不同参与者共同产生的订单。研究这些具体交易规则如何影响价格和成交，称为市场微观结构。
 
 > **学习导航**
@@ -295,6 +297,8 @@ signed_markout_bps
 
 ## 13.15 本章研究任务
 
+分层建议：第 1 题是基础研究，第 2～3 题是组合研究，第 4 题是工程研究；每项都要写明数据时点和不可识别项。
+
 1. 按 spread、volatility 和 depth 分组，研究 L1 imbalance 对 10 ms、100 ms、1 s markout 的预测性。
 2. 以 maker fill 为样本，计算 signed markout 并按 side、quote age、trade flow 和 venue 分组。
 3. 比较 mid、microprice 和多档 imbalance，报告 out-of-sample 结果与可交易延迟阈值。
@@ -309,3 +313,14 @@ signed_markout_bps
 对 maker 而言，获得 spread 与承受 adverse selection 是同一事件的两面。研究信号时既要观察未来 mid，也要以真实或模拟 fill 为条件观察 signed markout，并按 spread、volatility、depth 和 latency 分组。能预测价格不等于能在排队、费用和延迟之后获得收益。
 
 下一章从市场机制转向具体订单选择：TIF、price-time priority、主动扫单、被动排队和 parent/child 调度。目标是把“市场看起来怎样”变成“这笔执行实际付出了什么成本”。
+
+## 离开本章前：更新贯穿项目
+
+- **本章新增：** 带 horizon、方向和市场条件的 imbalance/markout 研究定义。
+- **本章修改的领域契约：** 市场事实与模型结果分离；每个信号声明方向、时间范围、条件和失效方式。
+- **本章新增的正常路径：** 从有效盘口计算 mid、microprice、imbalance，再观察多个 horizon 的 signed markout。
+- **本章新增的边界/故障：** 空侧、极端 spread、薄深度、市场状态切换和 maker 逆向选择。
+- **一键演示结果：** 同一事件窗口输出按 spread/depth/regime 分组的信号与 markout 摘要。
+- **保留证据：** maker 有利与不利成交、不同 spread/depth/regime 的分组结果。
+- **从此淘汰：** 把订单簿当真实价值，把预测 mid 的准确率直接当作可交易收益。
+- **当前仍不能证明：** L2 数据无法识别准确 queue position，成交资格仍需模拟和校准。

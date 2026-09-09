@@ -373,6 +373,8 @@ Evidence: doc title + access date + raw fixture + test name
 
 ## 15.17 本章练习
 
+分层建议：第 1～2 题是基础题，第 3 题是组合题，第 4～5 题是工程题；工程结论必须绑定规则版本。
+
 1. 实现线性合约 PnL 与 fee 账本，测试 long/short 和两腿成交。
 2. 为 funding 定义明确的 `Income` 方向，并用正负费率覆盖 long/short。
 3. 实现简化 tier maintenance 函数，测试刚好跨 tier 的连续性或规则跳变。
@@ -388,3 +390,14 @@ Evidence: doc title + access date + raw fixture + test name
 盈亏、保证金和强平规则还依赖账户模式与时间。全仓、逐仓、组合保证金和分层维持保证金不能用一个通用比例抹平；规则变化需要新的产品说明版本、固定样本和回放。压力测试应说明价格路径、仓位、未决订单和相关产品如何共同传递风险。
 
 下一章把这些合同现金流放进更一般的数学与账务框架：收益、波动、beta、平均成本、realized/unrealized PnL 和 equity identity。重点会从单个公式转向一组数字是否能共同闭合。
+
+## 离开本章前：更新贯穿项目
+
+- **本章新增：** 产品 metadata、线性/反向 PnL、fee/funding 方向和保证金压力情景。
+- **本章修改的领域契约：** 所有 PnL、fee、funding 和 margin 计算绑定 instrument、multiplier、settlement、price source 与规则版本。
+- **本章新增的正常路径：** 依据产品档案计算 long/short 开平、费用、资金费和压力后保证金。
+- **本章新增的边界/故障：** tier 边界、价格源变化、规则切换、反向合约和 collateral haircut。
+- **一键演示结果：** 一张产品档案驱动镜像 PnL 手算与 5%/10%/20% 压力表。
+- **保留证据：** long/short、开平、正负 funding、tier 边界和规则版本。
+- **从此淘汰：** 脱离产品类型和结算币讨论 PnL，或自行猜测精确强平价格。
+- **当前仍不能证明：** 单个产品算例尚未形成多币种可重放账本。

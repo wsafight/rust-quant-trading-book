@@ -101,3 +101,15 @@ ending_equity - starting_equity - external_cash_flow
 若只能给出最终 PnL 而不能复原现金流，回到第 15–17 章；若 touch 即成交，回到第 13、14 章。
 
 通过后冻结这条 golden cash-flow fixture。第四部分的 adapter、OMS 和 hard risk 都必须复用它的产品与账务定义，确保协议乱序不会改变经济事实的含义。
+
+## 独立评审
+
+请评审者使用[检查点三评审脚本](appendix-h-review-scripts.md#h5-检查点三评审产品公式与账务)，任选一项改变方向、multiplier、fee currency 或 funding，并要求逐事件复算。实现者不能只展示最终 PnL，必须解释每条现金流和 residual。
+
+## 交给下一阶段的输入
+
+- 带来源和生效时间的产品规则档案；
+- golden cash-flow fixture 与手算表；
+- execution identity、账本 reducer 和三类对账定义；
+- 重复、冲突、反手、fee/funding 和 residual 证据；
+- V3 标签或提交，以及独立复算记录。

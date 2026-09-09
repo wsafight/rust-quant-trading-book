@@ -379,6 +379,8 @@ operations: alert includes venue/channel/schema, raw payload reference
 
 ## 6.13 本章练习
 
+分层建议：第 1 题是基础题，第 2～3 题是组合题，第 4 题是工程题；所有任务都要包含错误类型断言。
+
 1. 定义 `VenueId`、`InstrumentId`、`ClientOrderId` 和 `ExecutionKey`，阻止跨 venue 混用裸字符串。
 2. 实现严格 decimal-to-ticks 转换，拒绝超过允许精度的输入，并分别测试买卖舍入策略。
 3. 为订单状态设计错误类型，区分非法本地命令、交易所明确拒绝和状态不确定。
@@ -393,3 +395,14 @@ operations: alert includes venue/channel/schema, raw payload reference
 错误类型的真正用途是决定行动。非法输入应拒绝并保留证据，临时外部失败可能退避，订单请求超时则进入未知状态并触发查询；把它们都装进一个字符串，会让上层只能统一重试或退出。类似地，property test 证明的是生成范围内的不变量，不会自动补足协议 fixture 和跨组件故障测试。
 
 下一章将为这些边界加入可替换实现。trait 会帮助 clock、decoder、fee model 和 adapter 在 live、replay 与测试之间替换；生命周期和 trait bound 则继续约束引用与线程边界。
+
+## 离开本章前：更新贯穿项目
+
+- **本章新增：** `PriceTicks`、`QtyLots`、稳定身份、严格小数转换、行动导向错误和性质测试。
+- **本章修改的领域契约：** 领域 API 使用有单位类型；错误按拒绝、重试、对账或停止等行动分类。
+- **本章新增的正常路径：** 十进制输入严格转换为 ticks/lots，再完成 checked PnL 与风险计算。
+- **本章新增的边界/故障：** 超精度、方向舍入、身份作用域、NaN/无穷、overfill 和算术溢出。
+- **一键演示结果：** 表驱动与性质测试共同展示合法输入、非法输入和最小反例。
+- **保留证据：** 方向、非法精度、重复身份、NaN/无穷与整数极值的测试矩阵。
+- **从此淘汰：** 权威订单与账务接口中的裸 `f64`、裸字符串 ID 和无法分类的错误文本。
+- **当前仍不能证明：** 类型不能冻结会变化的 venue 规则；动态 metadata 仍需版本化运行时校验。

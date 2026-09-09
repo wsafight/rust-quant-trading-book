@@ -238,6 +238,8 @@ log producer rate > sink rate
 
 ## 10.14 本章练习
 
+分层建议：第 1 题是基础题，第 2～3 题是组合题，第 4 题是工程题。
+
 1. 用 bounded channel 构建 producer/consumer，记录 queue depth 和 residence time。
 2. 分别为 order book delta、signal snapshot、fill 和日志写出满载策略。
 3. 画出一次下单 timeout 的事件时间线，标出每个时点的本地事实和远端未知。
@@ -252,3 +254,14 @@ log producer rate > sink rate
 Future 被 drop 只停止本地继续等待，不会撤回已经写入 socket 的请求。正常关闭也不是同时广播退出：应先禁止增险，再处理撤单与成交，刷新持久状态，最后停止观察能力。任务树必须说明谁监督、谁触发关闭、谁等待完成以及超时后交给谁处理。
 
 下一章把这些规则放进 TCP、HTTP 与 WebSocket 生命周期。网络层会引入 heartbeat、认证、重连和分层 timeout，但仍必须服从本章已经确定的 owner、背压和取消语义。
+
+## 离开本章前：更新贯穿项目
+
+- **本章新增：** 单一 book owner、有界输入队列、消息分类、supervisor 和关闭时间线。
+- **本章修改的领域契约：** 每条 channel 必须声明容量、满载动作和关闭责任；取消本地等待不改变远端事实。
+- **本章新增的正常路径：** producer 经有界队列向单一 reducer 发送事件，supervisor 管理启动与结束。
+- **本章新增的边界/故障：** 短时 burst、持续过载、consumer 退出和任意 `.await` 点取消。
+- **一键演示结果：** 可控负载输出 queue depth、residence time、处理速率和关闭摘要。
+- **保留证据：** 正常负载、短时 burst、持续过载和多个取消点的观察结果。
+- **从此淘汰：** 无界关键队列、所有消息共享同一丢弃规则，以及把 Future 取消当成远端动作撤销。
+- **当前仍不能证明：** 本地 scripted source 的行为等同于真实连接；下一章处理 transport 生命周期。

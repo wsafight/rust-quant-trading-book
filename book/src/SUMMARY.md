@@ -3,7 +3,18 @@
 [封面](README.md)
 [序言：先成为可信赖的工程师](preface.md)
 [全书阅读指南：带着一条交易链路学习](reading-guide.md)
+[学习看板：我在哪里，下一步做什么](learning-dashboard.md)
+[阅读层级地图：哪些先学，哪些后学](reading-level-map.md)
 [零基础预备课：先看懂一笔交易](beginner-primer.md)
+
+# 第零部分：编程与工程预备课（可选）
+
+- [本部分导读：先学会运行、观察与复现](part-0-guide.md)
+- [第 0.1 章 文件、目录与命令行](00-01-files-and-cli.md)
+- [第 0.2 章 用通用概念理解程序](00-02-programming-concepts.md)
+- [第 0.3 章 文本、JSON、时间与数值](00-03-data-and-time.md)
+- [第 0.4 章 Git 与可复现学习](00-04-git-and-evidence.md)
+- [阶段检查点零：独立运行与定位问题](gate-0-foundation.md)
 
 # 第一部分：Rust 语言与工程基础
 
@@ -60,12 +71,23 @@
 
 - [本部分导读：把知识压缩成可审查证据](part-6-guide.md)
 - [第 27 章 贯穿项目：从行情到可审计盈亏](27-capstone.md)
-- [第 28 章 24 周成长与求职路径](28-career.md)
+- [第 28 章 分层成长与求职路径](28-career.md)
 
 # 附录
 
+- [附录使用指南：按问题查，不必顺序读](appendix-guide.md)
 - [附录 A 术语与公式速查](appendix-a-glossary.md)
 - [附录 B 工程检查清单](appendix-b-checklists.md)
 - [附录 C 全章练习提示与验收指南](appendix-c-exercise-guidance.md)
 - [附录 D 版本、兼容性与变更记录](appendix-d-versioning.md)
 - [附录 E 参考资料与规则来源](appendix-e-references.md)
+- [附录 F 量化数学预备](appendix-f-math-primer.md)
+- [附录 G 学习故障排查](appendix-g-learning-troubleshooting.md)
+- [附录 H 阶段评审脚本](appendix-h-review-scripts.md)
+- [附录 I 六个带反馈实验](appendix-i-guided-labs.md)
+- [附录 J 三条毕业方向](appendix-j-graduation-tracks.md)
+- [附录 K 公开行情实训](appendix-k-public-market-data-lab.md)
+- [附录 L 数据工程与可追溯性](appendix-l-data-lineage.md)
+- [附录 M 错误实现审查题](appendix-m-failure-reviews.md)
+- [附录 N 课程试读与维护](appendix-n-course-feedback.md)
+- [附录 O 带反馈实验参考解答](appendix-o-lab-solutions.md)

@@ -105,3 +105,15 @@ private disconnect -> fill -> restart -> reconcile
 若 timeout 被写成 `Rejected`，回到第 10、19、21 章；若 fixture 无法证明 adapter 规则，回到第 20 章；若策略配置能修改 hard limit，回到第 22 章。
 
 通过后冻结完整事件日志与 checksum。第五部分会用同一套 book、OMS、risk 和 ledger reducer 做历史回放，确保研究路径不绕过刚刚验证的生产边界。
+
+## 独立评审
+
+请评审者使用[检查点四评审脚本](appendix-h-review-scripts.md#h6-检查点四评审交易闭环)，在故障序列任意时点暂停。实现者必须当场说明远端可能状态、已确认 execution、最坏暴露、能否增险和证据来源；不能等最终状态出现后倒推解释。
+
+## 交给下一阶段的输入
+
+- raw/normalized fixture 与 venue capability；
+- durable intent、OMS reducer、event log 和 reconciliation report；
+- hard-risk 决策表与最坏暴露计算；
+- 六类核心故障和重启前后 checksum；
+- V4 标签或提交，以及任意暂停点的评审记录。

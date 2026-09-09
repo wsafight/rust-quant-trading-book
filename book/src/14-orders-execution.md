@@ -286,6 +286,8 @@ fee             = sum(child_qty * fill_price * 2 / 10,000)
 
 ## 14.15 本章练习
 
+分层建议：第 1～2 题是基础题，第 3～4 题是组合题，第 5 题是工程题。
+
 1. 扩展 `sweep`，加入买卖方向、限价保护和 checked arithmetic，并分别测试空深度与部分可成交。
 2. 用 side sign 计算买卖 implementation shortfall。
 3. 模拟 maker order 的 queue ahead，比较频繁/延迟刷新。
@@ -301,3 +303,14 @@ fee             = sum(child_qty * fill_price * 2 / 10,000)
 评价执行不能只看成交均价。decision、arrival、mid、最终 benchmark 会回答不同问题；implementation shortfall 还需合并 fee、spread、depth walk、opportunity cost 和未完成任务。对 maker 策略，fill rate 与 markout 必须共同解释，否则提高成交率可能只是在吸收更多坏流量。
 
 下一章为订单加上产品合同。相同的 price 与 qty 在现货、线性合约和反向合约中会形成不同 notional、PnL、费用与保证金，因此执行结果必须绑定 instrument metadata 才能入账。
+
+## 离开本章前：更新贯穿项目
+
+- **本章新增：** TIF、逐档 sweep、parent/child 容量、执行基准与成本拆解。
+- **本章修改的领域契约：** parent 任务与 child 订单分离；活动、在途撤单和未知 child 都占用可能成交容量。
+- **本章新增的正常路径：** 按深度执行受价格保护的任务，并相对 decision/arrival benchmark 计算 shortfall。
+- **本章新增的边界/故障：** 深度不足、部分成交、pending cancel、uncertain child、overfill 和未完成任务。
+- **一键演示结果：** 对相同 parent fixture 比较立即、TWAP、POV 与被动执行的成本和剩余量。
+- **保留证据：** 深度不足、部分成交、pending cancel、overfill 和未完成任务。
+- **从此淘汰：** 只以成交均价评价执行，或把 amend/cancel-replace 当作无中间状态的原子动作。
+- **当前仍不能证明：** 结果尚未绑定真实 multiplier、结算币和保证金规则。

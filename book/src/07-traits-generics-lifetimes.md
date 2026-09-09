@@ -240,6 +240,8 @@ fake 应模拟契约，不要复制完整生产实现。否则测试替身和真
 
 ## 7.11 本章练习
 
+分层建议：第 1～2 题是基础题，第 3～4 题是组合题，第 5 题是工程题。
+
 1. 为 `Clock` 实现 `FixedClock` 和手动推进的 `ReplayClock`。
 2. 定义 `MarketDataDecoder`，使用关联 `Event/Error` 类型。
 3. 分别用泛型和 `dyn Trait` 调用两种 fee model，解释选择场景。
@@ -255,3 +257,14 @@ fake 应模拟契约，不要复制完整生产实现。否则测试替身和真
 生命周期只说明引用之间的有效范围。decoder 可以在当前调用内借用 buffer，但事件进入 channel 或持久化层时通常应转换为 owned value。`Send` 与 `Sync` 说明类型能否跨线程传递或共享，不说明业务状态允许多个任务共同修改。
 
 下一章会把领域类型、实现和测试放入 package、crate 与 workspace。抽象边界将从语言接口上升为依赖方向、feature 组合和 CI 质量门槛。
+
+## 离开本章前：更新贯穿项目
+
+- **本章新增：** 可替换 `Clock`、decoder、fee model 和最小 venue capability 接口。
+- **本章修改的领域契约：** trait 从调用方需要出发；借用 wire view 必须在跨任务或持久化前转成 owned event。
+- **本章新增的正常路径：** live/replay 时钟、两种 decoder 或 fee model 在同一调用边界替换。
+- **本章新增的边界/故障：** 生命周期越界、非 `Send` 数据跨线程和默认方法隐藏危险能力差异。
+- **一键演示结果：** 使用两套可控实现运行相同测试，输出一致领域行为。
+- **保留证据：** fixed/replay clock、两种实现替换，以及 borrowed wire view 转 owned event 的边界测试。
+- **从此淘汰：** 为复用而复制整个具体实现接口，或让借用数据越过 channel/持久化生命周期。
+- **当前仍不能证明：** 抽象具备合理的 crate 边界或生产性能；第 8、12 章分别验证。

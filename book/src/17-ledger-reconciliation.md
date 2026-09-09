@@ -223,6 +223,8 @@ detect conflict -> freeze affected projection -> preserve both payloads
 
 ## 17.14 本章练习
 
+分层建议：第 1～2 题是基础题，第 3～4 题是组合题，第 5 题是工程题。
+
 1. 给配套 ledger 增加 funding 与 external cash flow，分别测试收入/支出方向。
 2. 为 fee currency 增加类型边界，证明 BTC fee 不能直接与 USDT cash 相加。
 3. 构造平均成本为分数的部分平仓和反手 golden cases。
@@ -238,3 +240,15 @@ detect conflict -> freeze affected projection -> preserve both payloads
 equity identity 是持续检查，不是期末美化。event reconciliation 检查事实是否缺失或冲突，state reconciliation 比较派生仓位与余额，cash/equity reconciliation 检查经济闭合。snapshot 加速启动，但必须带 event offset、schema/config 版本和 checksum，随后继续重放并与远端事实对齐。
 
 现在进入[阶段检查点三](gate-3-products-accounting.md)。你将用一条固定现金流把盘口、执行、合约、费用、funding、平均成本和对账连起来；任何最终 PnL 都必须能够逐项复算。
+
+## 离开本章前：更新贯穿项目
+
+- **本章新增：** append-only 经济事实、execution 幂等/冲突、snapshot/checksum 和三层对账。
+- **本章修改的领域契约：** canonical state 只由不可变经济事实推导；snapshot 是加速点，不是独立真相。
+- **本章新增的正常路径：** 顺序应用 execution、fee、funding 与 transfer，生成持仓、现金、权益和 checksum。
+- **本章新增的边界/故障：** duplicate/conflict、部分平仓、反手、溢出、损坏 snapshot、断点重放和远端 drift。
+- **一键演示结果：** 重放 golden cash-flow 两次，输出相同状态与 reconciliation report。
+- **冻结版本 V3：** 一条可手算、重复重放结果不变、费用与 funding 后仍能闭合的交易现金流。
+- **从此淘汰：** 用最新仓位覆盖历史、重复 execution 再次入账，以及用“其他盈亏”填平 residual。
+- **当前仍不能证明：** 本地闭合不等于远端完整，恢复仍依赖查询范围和 venue 事实。
+- **进入下一阶段前：** 完成[阶段检查点三](gate-3-products-accounting.md)，再使用[第三部分带反馈实验](appendix-i-guided-labs.md#i3-第三部分一笔交易的经济闭环)和[检查点三评审脚本](appendix-h-review-scripts.md#h5-检查点三评审产品公式与账务)复核。

@@ -47,7 +47,23 @@
 
 固定样本不能证明当前线上服务正常，也不能覆盖所有真实事件；它的价值是让数据结构理解、小数转换和消息编号规则可以在离线自动检查中重复验证。
 
+## 第一次、第二次与卡住时
+
+- **第一次：** 跟随 raw 行情到 book，再跟随 intent 到 execution 和 ledger，始终区分本地事实与远端可能状态。
+- **第二次：** 再补 capability、限频、持久化边界、对账范围和恢复审批。
+- **卡住时：** 使用[第四部分带反馈实验](appendix-i-guided-labs.md#i4-第四部分五秒钟的部分失败)，在每个事件点暂停并写“已知、未知、允许动作”。
+
 ## 进入下一部分前
+
+本部分结束后冻结以下契约：
+
+| 已建立契约 | 后续不得退化为 |
+| --- | --- |
+| raw、normalized、state 和 decision 分层 | adapter 直接修改策略或账本 |
+| timeout 产生 Uncertain 并触发对账 | timeout 等于 reject 或换 ID 重发 |
+| active、pending 和 uncertain 都进入最坏暴露 | 风控只看已确认仓位 |
+| 策略只能提交 intent | 策略绕过 hard risk 访问 gateway |
+| 恢复需要远端事实和明确审批 | 进程重启成功即开放交易 |
 
 通过检查点四时，你应能演示 fill-before-ack、cancel/fill race、重复 execution、请求 timeout、私有流断线和重启对账。任何未知状态都不能被自动解释成失败并重试；risk-off 期间仍要消费成交、撤单和对账事件，使风险逐步收敛。
 
