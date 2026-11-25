@@ -1,0 +1,147 @@
+---
+chapterNumber: 9
+chapterCode: "R09"
+part: 3
+partName: "协议、并发与高可靠系统"
+title: "单写者事件循环与全序确定性回放"
+subtitle: "为什么放弃共享读写锁，改用所有权独占 + BinaryHeap<Reverse> 保证 100% 可复现？"
+readMinutes: 14
+rustConcepts:
+  - "BinaryHeap<Reverse>"
+  - "元组 Ord 全序"
+  - "所有权独占无锁"
+  - "时钟单调校验"
+engineeringGoal: "设计按全序键排序的事件回放器，拒绝时钟倒退与重复事件键"
+quantLessonSlug: "14-single-writer-replay"
+quantLessonTitle: "14：两个记账员同时改一本账，为什么一定会算错？"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+许多初学者设计交易系统时，会自然而然地把订单簿、持仓和 OMS 包进 `Arc<RwLock<EngineState>>`，让行情线程、成交回报线程和风控定时器线程一起抢锁修改。这套做法在实盘和复盘中会带来双重灾难：
+
+1. **竞态与不可复现（Heisenbug）**：同一微秒内，“一笔撤单回报”和“一笔新盘口快照”到达的线程调度顺序完全随机。昨天实盘亏了一笔钱，今天把同样的日志再跑一遍，因为锁竞争顺序变了，Bug 竟然复现不出来。
+2. **回放堆排序失真**：离线回放多路事件（行情、回报、定时器）时，如果只按 `ts_ns` 排序，两个时间戳完全相同的事件出队顺序是不确定的；更糟的是，如果上游日志出现时钟倒退（新事件比已处理事件还早）或者重复写入了同一条事件键，普通循环会默默重复记账。
+
+专业量化引擎的解法反直觉却极其优雅：**放弃多线程共享状态锁，采用单写者（Single-Writer）独占所有权**。所有外部 I/O 线程只负责把事件推进有界队列，唯一的主循环按**严格全序键（Total Order Key）**从最小堆依次取出事件并驱动状态机——没有锁竞争，且给定同一份事件流，跑一万次的结果按位完全一致。
+
+## 2. 核心 Rust 设计与在线语法点读
+
+下面这段核心代码展示了**最小堆事件调度器 + 单写者独占状态机**如何从类型和运行时双重锁死确定性。点击高亮语法即可查看解析。
+
+<AnnotatedCode
+  client:visible
+  title="单写者全序回放引擎：最小堆 + 单调性防线"
+  filePath="单写者回放范式"
+  code={`use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EventKey {
+    pub ts_ns: u64,
+    pub source_rank: u8,
+    pub seq: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReplayError {
+    ClockRegression { last: EventKey, incoming: EventKey },
+    DuplicateEventKey(EventKey),
+}
+
+pub struct SingleWriterReplayer<E> {
+    queue: BinaryHeap<Reverse<(EventKey, E)>>,
+    last_dispatched: Option<EventKey>,
+}
+
+impl<E: Ord> SingleWriterReplayer<E> {
+    pub fn push(&mut self, key: EventKey, event: E) -> Result<(), ReplayError> {
+        if let Some(last) = self.last_dispatched {
+            if key < last {
+                return Err(ReplayError::ClockRegression { last, incoming: key });
+            }
+            if key == last {
+                return Err(ReplayError::DuplicateEventKey(key));
+            }
+        }
+        self.queue.push(Reverse((key, event)));
+        Ok(())
+    }
+
+    pub fn next_event(&mut self) -> Result<Option<(EventKey, E)>, ReplayError> {
+        let Some(Reverse((key, event))) = self.queue.pop() else {
+            return Ok(None);
+        };
+        if let Some(last) = self.last_dispatched {
+            if key == last {
+                return Err(ReplayError::DuplicateEventKey(key));
+            }
+            if key < last {
+                return Err(ReplayError::ClockRegression { last, incoming: key });
+            }
+        }
+        self.last_dispatched = Some(key);
+        Ok(Some((key, event)))
+    }
+}`}
+  annotations={[
+    {
+      id: "r09-tuple-ord",
+      match: "#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]",
+      label: "派生全序 Ord",
+      plain: "Rust 自动按字段声明顺序生成字典序比较：先比 ts_ns，再比 source_rank（如回报优先于行情），最后比 seq 序号。",
+      guard: "消灭“同一纳秒两条事件谁先执行”的随机性，把多路并发事件压平成一条数学上唯一的全序时间线。",
+      firstAppearance: true,
+    },
+    {
+      id: "r09-binary-heap-reverse",
+      match: "BinaryHeap<Reverse<(EventKey, E)>>",
+      label: "BinaryHeap<Reverse>",
+      plain: "标准库 BinaryHeap 默认是大顶堆；套一层 Reverse 包装后，比较方向反转，自动变成每次弹出最小 EventKey 的小顶堆。",
+      guard: "以 O(log N) 复杂度按时间先后归并多路事件流，无需每插入一条就全量排序。",
+      firstAppearance: true,
+    },
+    {
+      id: "r09-mut-self-owner",
+      match: "&mut self",
+      label: "所有权独占无锁",
+      plain: "在 Rust 借用规则下，持有 &mut self 意味着此刻全程序只有当前循环能读写队列与账本状态，编译器静态禁止其他线程并发修改。",
+      guard: "彻底移除 Mutex / RwLock 的锁竞争与死锁风险，既提升微秒级吞吐，又让单写者不变量由编译器担保。",
+      firstAppearance: false,
+    },
+    {
+      id: "r09-clock-regression",
+      match: "if key < last",
+      label: "时钟单调校验",
+      plain: "将即将入队或出队的事件键与上一个已派发键对比，一旦发现倒退或重复键，立刻返回 Err 中止回放。",
+      guard: "防止迟到的历史数据包篡改已经推进的盘口状态，或重复落盘的成交回报导致双倍记账。",
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+注意 `push` 和 `next_event` 两处都检查了 `key == last`：前者拦住“已经处理完后再迟到/重复塞入”的事件，后者拦住“同时塞进堆里的两条完全相同键”的事件。单写者主循环拿到 `Ok(Some((key, event)))` 后，直接把 `&mut Ledger`、`&mut OrderBook` 传给处理函数即可，全程零锁、零竞态。
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="在回放引擎中，某条成交回报和某条盘口行情的 ts_ns 完全相同，但我们希望在同纳秒下永远先处理成交回报（source_rank = 1），再处理盘口行情（source_rank = 2）。如果忘记在 EventKey 里放 source_rank 和 seq，只用 ts_ns 排序，会发生什么？"
+  options={[
+    { label: "A", text: "编译器会报错，因为 BinaryHeap 要求键值必须全局唯一" },
+    { label: "B", text: "BinaryHeap 不保证相等键的相对弹出顺序，回放结果可能随插入顺序或堆内部调整而漂移" },
+    { label: "C", text: "Reverse 会自动按 FIFO 先进先出顺序弹出同时间戳事件" },
+    { label: "D", text: "程序会在运行时直接 panic 并提示键冲突" }
+  ]}
+  correctIndex={1}
+  explanation="Rust 的 BinaryHeap 是不稳定的优先队列（unstable），对于比较结果相等的元素，它既不保证 FIFO 也不保证固定顺序。因此全序键必须包含 (ts_ns, source_rank, seq) 这样的决胜字段（tie-breaker），才能确保 100% 确定性回放。"
+/>
+
+## 4. 工程检查清单
+
+- **用单写者代替共享锁**：把核心状态（盘口、OMS、风控、账本）收敛到单一所有权线程，靠 Rust `&mut self` 静态消灭数据竞争。
+- **定义严格全序键**：时间戳之外必须附带事件源优先级 `source_rank` 和单调序号 `seq`，用 `BinaryHeap<Reverse<...>>` 做确定性归并。
+- **对时钟倒退与重复键 Fail-Closed**：一旦检测到 `key <= last_dispatched`，立刻返回错误并停止状态推进，绝不带脏数据继续跑。

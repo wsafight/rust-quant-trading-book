@@ -1,0 +1,282 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import BrandIcon from '../components/ui/BrandIcon.astro';
+import { CURRICULUM, STAGES } from '../data/curriculum';
+import { GLOSSARY } from '../data/glossary';
+import { withBase } from '../lib/url';
+
+const totalLessons = CURRICULUM.length;
+const totalTerms = GLOSSARY.length;
+---
+
+<BaseLayout
+  title="零基础量化交易交互指南"
+  description="不懂金融术语、不写一行代码，用菜市场类比与 23 个浏览器交互沙盒看懂量化交易如何赚钱与避坑"
+>
+  <!-- Top Bar -->
+  <header class="sticky top-0 z-40 border-b border-slate-200/80 dark:border-slate-800/80 bg-slate-50/85 dark:bg-[#0b1017]/85 backdrop-blur-md">
+    <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6 gap-2">
+      <a href={withBase('/')} class="flex items-center gap-2.5 font-bold tracking-tight text-slate-900 dark:text-white">
+        <BrandIcon class="h-7 w-7 shrink-0" />
+        <span>QuantLab · 零基础量化交易交互指南</span>
+      </a>
+      <div class="flex items-center gap-2">
+        <div class="hidden lg:flex items-center rounded-lg border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/70 p-0.5 text-xs">
+          <a
+            href={withBase('/')}
+            class="rounded-md bg-emerald-500/15 px-2.5 py-1 font-semibold text-emerald-700 dark:text-emerald-300"
+          >
+            交易主书
+          </a>
+          <a
+            href={withBase('/rust')}
+            class="rounded-md px-2.5 py-1 font-medium text-slate-500 hover:text-amber-600 dark:hover:text-amber-300 transition-colors"
+          >
+            Rust 实战书
+          </a>
+        </div>
+        <button
+          type="button"
+          onclick="window.__openQuantPalette('search')"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/70 px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-emerald-500/40 transition-colors cursor-pointer"
+        >
+          <span>搜索</span>
+          <kbd class="hidden sm:inline rounded bg-slate-200/70 dark:bg-slate-800 px-1 py-0.5 font-mono text-[10px]">⌘K</kbd>
+        </button>
+        <button
+          type="button"
+          onclick="window.__openQuantPalette('glossary')"
+          class="hidden md:inline-flex items-center rounded-lg border border-teal-500/30 bg-teal-500/10 px-2.5 py-1.5 text-xs font-medium text-teal-700 dark:text-teal-300 hover:border-teal-500/60 transition-colors cursor-pointer"
+        >
+          术语词典
+        </button>
+        <button
+          type="button"
+          onclick="window.__toggleQuantTheme()"
+          class="inline-flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/70 px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-emerald-500/40 transition-colors cursor-pointer"
+        >
+          <span class="dark:hidden">深色</span>
+          <span class="hidden dark:inline">浅色</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-6xl px-4 sm:px-6 py-12 space-y-14">
+    <!-- Hero -->
+    <section class="relative overflow-hidden rounded-3xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-[#0f1621] p-7 sm:p-10 shadow-sm">
+      <div class="max-w-3xl">
+        <div class="inline-flex flex-wrap items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300 mb-5">
+          <span>全 {totalLessons} 篇零门槛交互课</span>
+          <span class="opacity-40">·</span>
+          <span>零金融基础</span>
+          <span class="opacity-40">·</span>
+          <span>零代码零命令行</span>
+        </div>
+
+        <h1 class="text-3xl sm:text-5xl font-extrabold tracking-tight text-slate-900 dark:text-white leading-[1.15]">
+          从菜市场买苹果起步，<br class="hidden sm:inline" />
+          亲手玩懂量化交易的赚钱与避坑。
+        </h1>
+
+        <p class="mt-5 text-base sm:text-lg text-slate-600 dark:text-slate-400 leading-relaxed">
+          不需要任何交易经验，也不需要安装编程环境。全书 6 大阶段、{totalLessons} 篇交互课全部用大白话和生活类比写成——
+          遇到看不懂的金融黑话（比如 <strong>bps</strong>、<strong>滑点</strong>、<strong>做空</strong>、<strong>强平</strong>），点一下词条原地看解释；
+          再在 {totalLessons} 个浏览器沙盒里亲自拖动滑块，把市场规律和亏钱陷阱摸透。
+        </p>
+
+        <div class="mt-7 flex flex-wrap items-center gap-3">
+          <a
+            href={withBase('/lessons/00a-exchange-market-basics')}
+            class="inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-5 py-3 text-sm font-semibold text-white shadow-sm transition-colors"
+          >
+            从 00A 开始：用菜市场看懂交易所 →
+          </a>
+          <a
+            href="#roadmap"
+            class="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100/70 dark:bg-slate-800/70 hover:border-emerald-500/50 px-5 py-3 text-sm font-semibold text-slate-800 dark:text-slate-200 transition-colors"
+          >
+            浏览全部 {totalLessons} 篇目录
+          </a>
+          <a
+            href={withBase('/rust')}
+            class="inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 hover:border-amber-500/60 px-4 py-3 text-sm font-semibold text-amber-700 dark:text-amber-300 transition-colors"
+          >
+            程序员伴生书：Rust 代码实战 →
+          </a>
+        </div>
+      </div>
+
+      <!-- Local Progress Summary Strip -->
+      <div class="mt-8 pt-6 border-t border-slate-200/80 dark:border-slate-800/80 grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="rounded-xl border border-slate-200/70 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 p-4">
+          <div class="text-xs text-slate-500">已完成交互课程</div>
+          <div id="home-lessons-done" class="mt-1 font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
+            0 / {totalLessons}
+          </div>
+        </div>
+        <div class="rounded-xl border border-slate-200/70 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 p-4">
+          <div class="text-xs text-slate-500">已上手交互沙盒</div>
+          <div id="home-labs-done" class="mt-1 font-mono text-2xl font-bold text-sky-600 dark:text-sky-400 tabular-nums">
+            0 / {totalLessons}
+          </div>
+        </div>
+        <div class="rounded-xl border border-slate-200/70 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 p-4 flex items-center justify-between gap-2">
+          <div>
+            <div class="text-xs text-slate-500">已解锁小白术语</div>
+            <div id="home-terms-done" class="mt-1 font-mono text-2xl font-bold text-teal-600 dark:text-teal-400 tabular-nums">
+              0 / {totalTerms}
+            </div>
+          </div>
+          <button
+            id="home-reset-progress"
+            type="button"
+            class="shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[11px] font-medium text-slate-500 hover:text-rose-500 hover:border-rose-500/40 transition-colors cursor-pointer"
+            title="清空本机 localStorage 学习进度"
+          >
+            重置进度
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Complete 23-Lesson Roadmap -->
+    <section id="roadmap" class="space-y-8">
+      <div>
+        <h2 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+          全书 {totalLessons} 篇零基础学习路线
+        </h2>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          建议完全按顺序阅读：先用 Stage 0 两篇扫清所有交易名词，再一步步玩透盘口、杠杆、回测防骗、实盘避坑与期权直觉。
+        </p>
+      </div>
+
+      <div class="space-y-8">
+        {STAGES.map((stageMeta) => {
+          const items = CURRICULUM.filter((l) => l.stage === stageMeta.stage);
+          return (
+            <div class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/30 p-5 sm:p-6">
+              <div class="mb-4">
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                    Stage 0{stageMeta.stage}
+                  </span>
+                  <h3 class="text-lg font-bold text-slate-900 dark:text-white">
+                    {stageMeta.name}
+                  </h3>
+                </div>
+                <p class="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  {stageMeta.tagline}
+                </p>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {items.map((lesson) => (
+                  <a
+                    href={withBase(`/lessons/${lesson.slug}`)}
+                    class="group flex flex-col justify-between rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1621] p-4 hover:border-emerald-500/50 hover:shadow-sm transition-all"
+                  >
+                    <div>
+                      <div class="flex items-center justify-between gap-2 mb-2">
+                        <span class="inline-flex items-center gap-1.5 font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                          {lesson.lessonCode}
+                          <span class="rounded bg-emerald-500/12 px-1.5 py-0.5 text-[10px] font-medium">
+                            {lesson.labName}
+                          </span>
+                        </span>
+                        <span
+                          data-home-badge={lesson.slug}
+                          class="text-[11px] font-mono text-slate-400"
+                        >
+                          {lesson.readMinutes} min
+                        </span>
+                      </div>
+                      <h4 class="font-bold text-slate-900 dark:text-slate-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                        {lesson.title}
+                      </h4>
+                      <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                        {lesson.subtitle}
+                      </p>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+
+    <!-- Companion Book Banner -->
+    <section class="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div>
+        <div class="text-xs font-mono font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+          伴生工程书 · 独立阅读
+        </div>
+        <h3 class="text-lg font-bold text-slate-900 dark:text-white mt-1">
+          《Rust 量化系统代码实战》（14 章全在线点读）
+        </h3>
+        <p class="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-1">
+          如果你是有编程基础的开发者，想看订单簿、OMS 乱序状态机、硬风控、单写者回放与期权定价在 Rust 里怎么写，可以切换到伴生工程书（同样无需本地装环境）。
+        </p>
+      </div>
+      <a
+        href={withBase('/rust')}
+        class="shrink-0 inline-flex items-center justify-center rounded-xl bg-amber-600 hover:bg-amber-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors"
+      >
+        打开 Rust 实战书 →
+      </a>
+    </section>
+  </main>
+
+  <script>
+    import { loadProgress, resetProgress, PROGRESS_EVENT } from '../lib/progress';
+    import { CURRICULUM } from '../data/curriculum';
+    import { GLOSSARY } from '../data/glossary';
+
+    const total = CURRICULUM.length;
+    const totalTerms = GLOSSARY.length;
+    const lessonsEl = document.getElementById('home-lessons-done');
+    const labsEl = document.getElementById('home-labs-done');
+    const termsEl = document.getElementById('home-terms-done');
+    const resetBtn = document.getElementById('home-reset-progress');
+
+    const renderHomeProgress = () => {
+      const p = loadProgress();
+      const doneLessons = p.completedLessons.filter((s) =>
+        CURRICULUM.some((l) => l.slug === s),
+      ).length;
+      const doneTerms = p.exploredTerms.filter((id) =>
+        GLOSSARY.some((g) => g.id === id),
+      ).length;
+      const doneLabs = Math.min(p.completedLabs.length, total);
+      if (lessonsEl) lessonsEl.textContent = `${doneLessons} / ${total}`;
+      if (labsEl) labsEl.textContent = `${doneLabs} / ${total}`;
+      if (termsEl) termsEl.textContent = `${doneTerms} / ${totalTerms}`;
+
+      document.querySelectorAll<HTMLElement>('[data-home-badge]').forEach((el) => {
+        const slug = el.dataset.homeBadge || '';
+        const item = CURRICULUM.find((l) => l.slug === slug);
+        if (p.completedLessons.includes(slug)) {
+          el.textContent = '✓ 已完成';
+          el.classList.remove('text-slate-400');
+          el.classList.add('text-emerald-600', 'dark:text-emerald-400', 'font-semibold');
+        } else if (item) {
+          el.textContent = `${item.readMinutes} min`;
+          el.classList.add('text-slate-400');
+          el.classList.remove('text-emerald-600', 'dark:text-emerald-400', 'font-semibold');
+        }
+      });
+    };
+
+    resetBtn?.addEventListener('click', () => {
+      if (window.confirm('确认清空本机所有课程、沙盒、术语和 Rust 实战书进度吗？')) {
+        resetProgress();
+        renderHomeProgress();
+      }
+    });
+
+    window.addEventListener(PROGRESS_EVENT, renderHomeProgress);
+    renderHomeProgress();
+  </script>
+</BaseLayout>

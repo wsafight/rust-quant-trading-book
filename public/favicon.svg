@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#070b12" />
+    </linearGradient>
+    <linearGradient id="ring" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="55%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+    <linearGradient id="pulse" x1="14" y1="42" x2="50" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#bg)" stroke="url(#ring)" stroke-width="2.5" />
+  <!-- Subtle L2 order-book depth bars -->
+  <rect x="13" y="42" width="7" height="8" rx="1.8" fill="#10b981" fill-opacity="0.35" />
+  <rect x="23" y="36" width="7" height="14" rx="1.8" fill="#10b981" fill-opacity="0.55" />
+  <rect x="33" y="31" width="7" height="19" rx="1.8" fill="#10b981" fill-opacity="0.75" />
+  <rect x="43" y="24" width="7" height="26" rx="1.8" fill="#38bdf8" fill-opacity="0.55" />
+  <!-- Crisp quant signal / equity pulse -->
+  <path d="M13 38 L22 33 L29 36 L39 21 L45 25 L51 15" stroke="url(#pulse)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="51" cy="15" r="3.4" fill="#34d399" />
+  <circle cx="51" cy="15" r="1.4" fill="#ecfdf5" />
+</svg>

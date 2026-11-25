@@ -1,0 +1,199 @@
+---
+chapterNumber: 8
+chapterCode: "R08"
+part: 3
+partName: "协议、并发与高可靠系统"
+title: "交易所协议解码与离线固定样本回归"
+subtitle: "不经 f64 直接把 JSON 价格字符串解析为整数刻度，拒收超精度脏字段"
+readMinutes: 13
+rustConcepts:
+  - "#[serde(rename)]"
+  - "定长数组约束"
+  - "字符级定点解析"
+  - "拒绝非零多余小数"
+engineeringGoal: "实现 serde 协议适配层与零浮点定点字符串解析器"
+quantLessonSlug: "13-venue-protocols-fixtures"
+quantLessonTitle: "13：不同交易所规则五花八门，新手最容易在哪踩坑？"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+不同交易所的 WebSocket 增量推送长得五花八门：有的用 `"b"` / `"a"` 表示买卖盘，有的用 `"bids"` / `"asks"`；而且为了避开 JSON 数值精度丢失，主流交易所都会把价格和数量编码成**字符串**，例如 `["68420.50", "1.250"]`。
+
+普通脚本最常见的偷懒写法是：先 `s.parse::<f64>()` 转成浮点数，再乘以 `100.0` 四舍五入转整数。这在实盘里至少会埋下三颗雷：
+
+1. **二进制浮点漂移**：`"100.15"` 经过 `f64` 再乘 `100.0`，在部分边界值上会变成 `10014.999999999998`，直接强转 `as i64` 就少了一跳（1 tick）。
+2. **静默截断超精度脏数据**：假如标的最小变动价位是 `0.01`（2 位小数），交易所协议升级或配置错位突然推来了 `"100.155"`。`round()` 会悄悄把它吞掉变成 `10016`，你的盘口和交易所真实撮合价从此偏离半跳。
+3. **动态数组越界与缺字段**：如果把一档盘口反序列化成 `Vec<String>`，当交易所推来残缺的 `["68420.50"]` 或多塞了订单计数 `["68420.50", "1.250", "3"]` 时，下标索引要么 `panic`，要么静默忽略协议变更。
+
+正确的工程防线只有一条：**协议层与领域层彻底隔离**——用 `serde` 严格卡住外层字段结构，再通过**字符级定点解析**把字符串直接映射到整数刻度，全程不碰 `f64`，遇到任何非零多余小数立刻拒收。
+
+## 2. 核心 Rust 设计与在线语法点读
+
+下面两段核心代码分别展示：**协议适配层如何约束外部 JSON 形态**，以及**字符级解析器如何零浮点转成整数刻度**。点击高亮语法标签即可展开原理解释。
+
+<AnnotatedCode
+  client:visible
+  title="协议适配层：严格映射交易所 JSON 字段"
+  filePath="交易所协议适配层"
+  code={`use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VenueDepthFrame {
+    #[serde(rename = "u")]
+    pub update_id: u64,
+    #[serde(rename = "b")]
+    pub bids: Vec<[String; 2]>,
+    #[serde(rename = "a")]
+    pub asks: Vec<[String; 2]>,
+}
+
+pub fn decode_depth_frame(raw_json: &str) -> Result<VenueDepthFrame, serde_json::Error> {
+    serde_json::from_str::<VenueDepthFrame>(raw_json)
+}`}
+  annotations={[
+    {
+      id: "r08-deny-unknown",
+      match: "#[serde(deny_unknown_fields)]",
+      label: "deny_unknown_fields",
+      plain: "告诉 serde：只要 JSON 里出现结构体未声明的多余字段，反序列化就直接报错，而不是默默忽略。",
+      guard: "当交易所悄悄新增影响语义的字段（如盘口重置标记、快照版本号）时，离线固定样本回归会第一时间报警，防止旧解析器带病上线。",
+      firstAppearance: true,
+    },
+    {
+      id: "r08-serde-rename",
+      match: "#[serde(rename = \"u\")]",
+      label: "#[serde(rename)]",
+      plain: "在外部 JSON 缩写字段 \"u\" 和内部语义清晰的字段名 update_id 之间建立映射。",
+      guard: "把交易所五花八门的短字段名隔绝在协议边界，内部引擎永远只面对统一、可读的领域字段，换交易所只需重写这一层。",
+      firstAppearance: true,
+    },
+    {
+      id: "r08-fixed-array",
+      match: "Vec<[String; 2]>",
+      label: "定长数组约束 [String; 2]",
+      plain: "外层 Vec 表示档位数量可变，但每一档必须是长度严格为 2 的定长数组 [价格字符串, 数量字符串]。",
+      guard: "从类型层消灭“残缺档位”或“三元组协议变更”导致的越界 panic，serde 会在解析阶段直接拒绝长度不为 2 的脏档位。",
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+拿到 `[price_str, qty_str]` 之后，绝不能交给 `f64`。我们直接按字节扫描 ASCII 数字，把整数部分和小数部分按 `scale`（例如 2 位小数对应 `0.01`）累加进 `i64`：
+
+<AnnotatedCode
+  client:visible
+  title="零浮点字符级定点解析器：拒收非零多余小数"
+  filePath="定点字符串解析器"
+  code={`#[derive(Debug, PartialEq, Eq)]
+pub enum ParseTickError {
+    EmptyOrInvalidChar,
+    PrecisionExceeded,
+    Overflow,
+}
+
+pub fn parse_fixed_ticks(raw: &str, scale: u8) -> Result<i64, ParseTickError> {
+    let s = raw.trim();
+    if s.is_empty() || s.starts_with('-') {
+        return Err(ParseTickError::EmptyOrInvalidChar);
+    }
+    let (int_part, frac_part) = s.split_once('.').unwrap_or((s, ""));
+    let mut acc: i64 = 0;
+
+    for b in int_part.bytes() {
+        if !b.is_ascii_digit() {
+            return Err(ParseTickError::EmptyOrInvalidChar);
+        }
+        acc = acc
+            .checked_mul(10)
+            .and_then(|v| v.checked_add((b - b'0') as i64))
+            .ok_or(ParseTickError::Overflow)?;
+    }
+
+    let frac_bytes = frac_part.as_bytes();
+    for i in 0..(scale as usize) {
+        let digit = match frac_bytes.get(i) {
+            Some(&b) if b.is_ascii_digit() => (b - b'0') as i64,
+            Some(_) => return Err(ParseTickError::EmptyOrInvalidChar),
+            None => 0,
+        };
+        acc = acc
+            .checked_mul(10)
+            .and_then(|v| v.checked_add(digit))
+            .ok_or(ParseTickError::Overflow)?;
+    }
+
+    if frac_bytes.len() > scale as usize {
+        for &b in &frac_bytes[scale as usize..] {
+            if !b.is_ascii_digit() {
+                return Err(ParseTickError::EmptyOrInvalidChar);
+            }
+            if b != b'0' {
+                return Err(ParseTickError::PrecisionExceeded);
+            }
+        }
+    }
+    Ok(acc)
+}`}
+  annotations={[
+    {
+      id: "r08-split-once",
+      match: "s.split_once('.')",
+      label: "split_once('.')",
+      plain: "按第一个小数点把字符串拆成整数段和小数段；若没有小数点，unwrap_or 返回原串与空小数段。",
+      guard: "如果字符串里有多个小数点（如 \"10.2.3\"），第二个点会落进 frac_part，随后立刻被 is_ascii_digit() 拦截，零额外正则开销。",
+      firstAppearance: true,
+    },
+    {
+      id: "r08-byte-scan",
+      match: "b.is_ascii_digit()",
+      label: "字符级 ASCII 校验",
+      plain: "直接按字节判断字符是否在 '0'..='9' 范围内，用 (b - b'0') 还原数字值，完全不经过浮点数运算。",
+      guard: "彻底消灭 IEEE-754 浮点舍入误差，同时拒收科学计数法（如 \"1e-5\"）、NaN、千分位逗号等非标准价格格式。",
+      firstAppearance: true,
+    },
+    {
+      id: "r08-checked-chain",
+      match: ".checked_mul(10)",
+      label: "checked_mul 溢出防线",
+      plain: "每次左移十进制位都做显式溢出检查，一旦超过 i64 上限返回 None，由 ok_or 转为 Overflow 错误。",
+      guard: "防止交易所推送异常天文数字或恶意超长字符串时触发整数回绕，把天价买单算成负数或极小值。",
+      firstAppearance: false,
+    },
+    {
+      id: "r08-reject-nonzero-frac",
+      match: "if b != b'0'",
+      label: "拒绝非零多余小数",
+      plain: "超过规定精度 scale 的尾随小数位，允许补零（如 \"100.5000\" 对 scale=2 合法），但只要出现非零数字立刻报错。",
+      guard: "兼顾交易所常附带尾随零的习惯，同时严厉拦截最小价位变化导致的隐式截断，守住价格精确不变量。",
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+在工程落地上，把每家交易所的真实报文（正常增量、尾随零、精度超限、缺字段、空盘口）固化为**离线固定样本集（Fixtures）**，每次修改协议层都用同一批样本回归验证，就能在不连实盘网络的情况下锁死兼容性。
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question={'标的最小变动价位为 0.01（scale = 2）。某天交易所推送了一档卖价字符串 "68420.500" 和另一档异常字符串 "68420.505"。上面的 parse_fixed_ticks(raw, 2) 会如何处理？'}
+  options={[
+    { label: "A", text: "两者都返回 Err(PrecisionExceeded)，因为小数位数都超过了 2 位" },
+    { label: "B", text: "\"68420.500\" 返回 Ok(6842050)，\"68420.505\" 返回 Err(PrecisionExceeded)" },
+    { label: "C", text: "\"68420.500\" 返回 Ok(6842050)，\"68420.505\" 自动四舍五入返回 Ok(6842051)" },
+    { label: "D", text: "两者都会因为缺少负号检查而触发 Overflow" }
+  ]}
+  correctIndex={1}
+  explanation={'交易所经常在价格字符串末尾补 0 对齐展示精度（如 "68420.500" 数学上精确等于 68420.50），因此尾随的 \'0\' 被合法接受并解析为 6842050；而 "68420.505" 在第 3 位小数出现了非零数字 \'5\'，继续截断或四舍五入都会导致盘口失真，必须立刻返回 Err(PrecisionExceeded) 拒绝该帧。'}
+/>
+
+## 4. 工程检查清单
+
+- **协议层绝不泄漏到核心引擎**：用 `#[serde(rename)]` 和 `#[serde(deny_unknown_fields)]` 把交易所字段命名差异与协议变更拦截在最外层。
+- **解析全程零 `f64`**：价格与数量字符串直接按字节流转成定点整数刻度，配合 `checked_mul` / `checked_add` 防止溢出回绕。
+- **尾随零宽容、非零超精度零容忍**：把各类真实与畸形报文沉淀为离线固定样本回归集，避免依赖实盘环境肉眼排错。

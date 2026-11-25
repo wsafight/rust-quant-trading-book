@@ -1,0 +1,41 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import BrandIcon from '../components/ui/BrandIcon.astro';
+import { withBase } from '../lib/url';
+---
+
+<BaseLayout title="页面未找到 (404)" description="你访问的页面可能已迁移到新版交互式课程目录">
+  <div class="min-h-screen flex flex-col items-center justify-center px-4 py-16 text-center">
+    <div class="max-w-md w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 p-8 shadow-sm">
+      <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
+        <BrandIcon class="h-8 w-8" />
+      </div>
+      <div class="font-mono text-xs font-semibold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">
+        404 · Page Not Found
+      </div>
+      <h1 class="mt-2 text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+        页面不存在或已迁移
+      </h1>
+      <p class="mt-3 text-sm leading-relaxed text-slate-600 dark:text-slate-400">
+        本站已升级为双书交互平台（零基础量化交易主书 + Rust 量化代码实战书）。你可以从下面两个入口继续阅读，或按
+        <kbd class="mx-1 rounded bg-slate-200/80 dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[11px]">⌘K</kbd>
+        检索全站内容。
+      </p>
+
+      <div class="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
+        <a
+          href={withBase('/')}
+          class="inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 transition-colors"
+        >
+          进入交易主书首页
+        </a>
+        <a
+          href={withBase('/rust')}
+          class="inline-flex items-center justify-center rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-sm font-semibold text-amber-700 dark:text-amber-300 hover:border-amber-500/70 transition-colors"
+        >
+          进入 Rust 实战书
+        </a>
+      </div>
+    </div>
+  </div>
+</BaseLayout>

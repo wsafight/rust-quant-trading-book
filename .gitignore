@@ -1,8 +1,10 @@
-# mdBook build output
-/book/html/
+# Astro & Node build output
+/dist/
+/.astro/
+/node_modules/
 
 # Cargo build output for the runnable companion project
-/book/code/target/
+/code/target/
 
 # Local editor and operating-system files
 .DS_Store

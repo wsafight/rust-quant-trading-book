@@ -1,0 +1,171 @@
+---
+chapterNumber: 10
+chapterCode: "R10"
+part: 3
+partName: "协议、并发与高可靠系统"
+title: "Tokio 异步管线、有界背压与超时边界"
+subtitle: "用有界通道挡住行情洪峰，并把网络超时做成显式本地等待边界"
+readMinutes: 13
+rustConcepts:
+  - "tokio::sync::mpsc"
+  - "有界容量背压"
+  - "tokio::time::timeout"
+  - "Send + static 所有权"
+engineeringGoal: "掌握 tokio::sync::mpsc 背压、timeout 本地语义与 owned 任务返回值"
+quantLessonSlug: "15-backpressure-p99-latency"
+quantLessonTitle: "15：平时网速很快，为什么暴跌那天软件直接卡死？"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+行情平稳时，每秒只有几十条推送，随便用一个无界通道（`unbounded_channel`）和普通的 `async/await` 请求就能跑得飞快。但只要遇上 CPI 数据发布或瞬间插针暴跌，每秒涌来数万条推送，普通异步代码会立刻暴露三个致命短板：
+
+1. **无界通道引发 OOM 与延迟雪崩**：消费者处理不过来时，无界队列疯狂积压几十万条过期行情。内存暴涨的同时，策略看到的已经是 5 秒前的旧盘口，发出的每一笔单都在给对手盘送钱。
+2. **把本地超时当成“交易所没收到”**：用 `tokio::time::timeout` 等下单回报超时后，很多代码直接认为“订单失败了，赶紧再下一单”。但 `timeout` 只表示**本地等待窗口到期**，请求可能已经在交易所撮合成交，盲目重发就是双倍开仓事故。
+3. **跨任务借用编译不过或数据共享失控**：在 `tokio::spawn` 中试图借用栈上局部变量，或者把整本大状态用锁到处传，导致异步调度器被阻塞，P99 延迟直线飙升。
+
+高可靠异步管线的核心纪律是：**通道必须有界（显式背压策略）**、**超时必须转为 Uncertain 风险态**、**跨任务只传递拥有所有权的轻量消息**。
+
+## 2. 核心 Rust 设计与在线语法点读
+
+下面这段 Tokio 管线代码展示了：**有界通道 `try_send` 非阻塞背压**，以及**显式区分“通道满载”与“本地等待超时”的下单网关封装**。点击高亮语法标签即可展开解析。
+
+<AnnotatedCode
+  client:visible
+  title="有界背压通道与显式本地超时边界"
+  filePath="Tokio 异步管线与超时语义"
+  code={`use std::time::Duration;
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::timeout;
+
+#[derive(Debug)]
+pub struct OrderReq {
+    pub cl_ord_id: u64,
+    pub reply_tx: oneshot::Sender<Result<u64, String>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum GatewayOutcome {
+    Acked(u64),
+    Rejected(String),
+    BackpressureFull,
+    LocalWaitTimedOut,
+}
+
+pub async fn submit_with_boundary(
+    tx: &mpsc::Sender<OrderReq>,
+    cl_ord_id: u64,
+    wait_limit: Duration,
+) -> GatewayOutcome {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    let req = OrderReq { cl_ord_id, reply_tx };
+
+    if tx.try_send(req).is_err() {
+        return GatewayOutcome::BackpressureFull;
+    }
+
+    match timeout(wait_limit, reply_rx).await {
+        Ok(Ok(Ok(venue_id))) => GatewayOutcome::Acked(venue_id),
+        Ok(Ok(Err(reason))) => GatewayOutcome::Rejected(reason),
+        Ok(Err(_closed)) => GatewayOutcome::LocalWaitTimedOut,
+        Err(_elapsed) => GatewayOutcome::LocalWaitTimedOut,
+    }
+}`}
+  annotations={[
+    {
+      id: "r10-mpsc-bounded",
+      match: "mpsc::Sender<OrderReq>",
+      label: "有界通道 mpsc::Sender",
+      plain: "由 mpsc::channel(capacity) 创建的有界多生产者单消费者发送端，队列长度在初始化时固定上限。",
+      guard: "彻底消灭极端行情下的无限内存堆积，把过载变成可观测、可限流的显式背压信号。",
+      firstAppearance: true,
+    },
+    {
+      id: "r10-try-send-backpressure",
+      match: "tx.try_send(req)",
+      label: "非阻塞背压 try_send",
+      plain: "立即尝试入队：若通道已满不会无限挂起等待，而是立刻返回 Err(TrySendError::Full)。",
+      guard: "防止下游网络卡顿时反向把上游策略主循环拖死，调用方可以立刻感知拥塞并触发降级或熔断。",
+      firstAppearance: true,
+    },
+    {
+      id: "r10-timeout-local",
+      match: "timeout(wait_limit, reply_rx).await",
+      label: "tokio::time::timeout",
+      plain: "给任意异步 Future 套上一层本地倒计时；若在 wait_limit 内未完成，外层返回 Err(Elapsed) 并丢弃等待句柄。",
+      guard: "给网络 I/O 划出硬延迟上界，同时通过返回 LocalWaitTimedOut 提醒 OMS：订单去向未知，必须转入 Uncertain 锁仓，绝不能当成失败重发。",
+      firstAppearance: true,
+    },
+    {
+      id: "r10-oneshot-owned",
+      match: "oneshot::channel()",
+      label: "oneshot 所有权回传",
+      plain: "创建一个一次性通道，把 reply_tx 的所有权随 OrderReq 一起 move 给网关任务，无需共享锁即可拿回 Owned 结果。",
+      guard: "满足 tokio::spawn 所需的 Send + 'static 约束，跨任务通信零锁竞争，且每个请求天然绑定唯一响应。",
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+再看网关工作协程如何用 `tokio::spawn` 启动，并确保所有跨任务数据都是拥有所有权的 `Send + 'static` 类型：
+
+<AnnotatedCode
+  client:visible
+  title="独立异步工作任务：Send + 'static 边界"
+  filePath="Tokio 工作协程边界"
+  code={`pub fn spawn_gateway_worker(
+    mut rx: mpsc::Receiver<OrderReq>,
+) -> tokio::task::JoinHandle<u64> {
+    tokio::spawn(async move {
+        let mut processed: u64 = 0;
+        while let Some(req) = rx.recv().await {
+            processed += 1;
+            // 实际项目中在此执行异步网络发单，并将结果发回 reply_tx
+            let _ = req.reply_tx.send(Ok(req.cl_ord_id + 10_000));
+        }
+        processed
+    })
+}`}
+  annotations={[
+    {
+      id: "r10-spawn-async-move",
+      match: "tokio::spawn(async move",
+      label: "async move + Send + 'static",
+      plain: "move 关键字把接收端 rx 的所有权整体移入后台任务；tokio::spawn 要求任务内不持有任何短生命周期借用，且所有数据均可安全跨线程发送。",
+      guard: "编译器在编译期杜绝悬垂引用和线程不安全共享；任务退出时还可以直接返回 Owned 统计值（u64）供主控审计。",
+      firstAppearance: true,
+    },
+    {
+      id: "r10-ignore-closed-reply",
+      match: "let _ = req.reply_tx.send(",
+      label: "优雅处理调用方已超时",
+      plain: "如果调用方已经触发 timeout 并释放了 reply_rx，send 会返回 Err；这里不 panic，而是由下游回报流继续同步真实状态。",
+      guard: "避免因单次调用方超时放弃等待，导致整个网关协程崩溃退出，影响账户里其他正常订单。",
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="当 submit_with_boundary 返回 GatewayOutcome::LocalWaitTimedOut 时，OMS 和策略层最安全的下一步动作是什么？"
+  options={[
+    { label: "A", text: "立即用同一个 cl_ord_id 重试发单，因为本地超时说明网络包肯定没发出去" },
+    { label: "B", text: "将该订单标记为 Uncertain 未知态，保留最坏敞口额度，并等待交易所回报或主动查单对账" },
+    { label: "C", text: "把该订单直接标记为 Cancelled，释放保证金给下一个策略信号" },
+    { label: "D", text: "把 mpsc 通道改成 unbounded_channel，这样就不会再超时了" }
+  ]}
+  correctIndex={1}
+  explanation="tokio::time::timeout 只是本地等待超时，完全不能证明交易所没有收到或没有成交该订单。只有将其转入 Uncertain 状态并按最坏情况计入风控敞口，直到收到明确回报或查单确认，才能彻底防止重复开仓。"
+/>
+
+## 4. 工程检查清单
+
+- **一切队列皆有界**：行情和发单通道统一使用 `tokio::sync::mpsc::channel(N)`，并用 `try_send` 明确过载时的丢弃或限流策略。
+- **超时不等于失败**：把 `tokio::time::timeout` 的 `Err` 严格映射为 `LocalWaitTimedOut` / `Uncertain`，严禁自动盲目重发。
+- **跨任务只传 Owned 消息**：通过 `async move` 和 `oneshot` 传递所有权，满足 `Send + 'static`，让编译器替你挡住数据竞争与悬垂引用。

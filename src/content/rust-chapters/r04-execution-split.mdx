@@ -1,0 +1,175 @@
+---
+chapterNumber: 4
+chapterCode: "R04"
+part: 2
+partName: "撮合、执行与风控核心"
+title: "父单拆单执行与在途容量守恒"
+subtitle: "拆单撤单重发时，为什么 PendingCancel 也必须占住父单剩余额度？"
+readMinutes: 13
+rustConcepts:
+  - "enum 策略分支"
+  - "切片窗口迭代"
+  - "整数拆单防余数丢失"
+  - "容量不变量"
+engineeringGoal: "用枚举表达 TWAP/VWAP 拆单计划并确保在途容量守恒不超买"
+quantLessonSlug: "03-order-types-twap-vwap"
+quantLessonTitle: "03：大单拆成小单慢慢买，真的省钱吗？"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+当基金要买入 100,000 股某股票时，执行算法（TWAP / VWAP）会把这笔**父单（Parent Order）**拆成几十笔**子单（Child Order）**分时段发出。实盘里最惊险的“超买事故”往往不是算法逻辑写错，而是下面两个细节没守住：
+
+1. **整数除法把余数丢了，或者向上取整把总量买超了**：把 100 股按 3 个时间片均分，如果每片发 `100 / 3 = 33` 股，最后少买 1 股；如果每片向上取整发 34 股，最后多买 2 股。
+2. **撤单还没确认就急着重发（最致命的并发超买）**：子单 A 挂了 1,000 股没成交，执行器发出了撤单指令，子单进入 `PendingCancel` 状态。如果执行器以为“反正已经撤了，额度释放了”，立刻又发出一笔 1,000 股的子单 B，结果交易所发来回报：“子单 A 撤单失败，就在 1 毫秒前已经全部成交！”——两笔同时成交，父单瞬间超买 1,000 股。
+
+解决之道只有一条铁律：**容量守恒不变量**——在撤单被交易所最终确认（`Canceled`）之前，`PendingCancel` 的剩余数量依然必须 100% 占用父单额度。
+
+---
+
+## 2. 核心 Rust 设计与在线语法点读
+
+先看拆单计划生成器：用 `enum` 表达 TWAP 与 VWAP 策略分支，并用整数余数分配确保所有子单切片之和**精确等于**父单目标总量。
+
+<AnnotatedCode
+  client:visible
+  title="零余数丢失的 TWAP / VWAP 整数拆单"
+  filePath="拆单计划生成"
+  code={`pub enum SplitStrategy<'a> {
+    Twap { slices: usize },
+    Vwap { volume_weights: &'a [u64] },
+}
+
+pub fn build_schedule(total_qty: u64, strategy: SplitStrategy<'_>) -> Option<Vec<u64>> {
+    match strategy {
+        SplitStrategy::Twap { slices } if slices > 0 => {
+            let base = total_qty / slices as u64;
+            let rem = (total_qty % slices as u64) as usize;
+            let mut plan = vec![base; slices];
+            for slot in plan.iter_mut().take(rem) {
+                *slot += 1;
+            }
+            Some(plan)
+        }
+        SplitStrategy::Vwap { volume_weights } if !volume_weights.is_empty() => {
+            let weight_sum: u64 = volume_weights.iter().sum();
+            if weight_sum == 0 {
+                return None;
+            }
+            let mut plan = Vec::with_capacity(volume_weights.len());
+            let mut allocated = 0u64;
+            for (idx, &w) in volume_weights.iter().enumerate() {
+                let qty = if idx + 1 == volume_weights.len() {
+                    total_qty - allocated
+                } else {
+                    (total_qty * w) / weight_sum
+                };
+                allocated += qty;
+                plan.push(qty);
+            }
+            Some(plan)
+        }
+        _ => None,
+    }
+}`}
+  annotations={[
+    {
+      id: 'r04-strategy-enum',
+      match: "pub enum SplitStrategy<'a>",
+      label: 'enum 策略分支',
+      plain: '把不同的拆单算法和它们各自需要的参数打包进同一个枚举，TWAP 只需要时间片数，VWAP 借用一段历史成交量权重切片。',
+      guard: '避免用一堆可选字段（slices: Option<usize>, weights: Option<Vec<u64>>）凑合，从类型上杜绝“选了 VWAP 却忘了传权重”的非法组合。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r04-rem-dist',
+      match: 'for slot in plan.iter_mut().take(rem)',
+      label: '整数拆单防余数丢失',
+      plain: '先把 total_qty 整除后的余数 rem 逐个 +1 分摊给前 rem 个时间片，VWAP 则把尾差全量收口到最后一片。',
+      guard: '数学上严格保证 plan.iter().sum() == total_qty，既不会少买留尾巴，也不会四舍五入买超。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r04-slice-iter',
+      match: 'volume_weights.iter().enumerate()',
+      label: '切片窗口迭代',
+      plain: '直接零拷贝遍历借用的权重切片 &[u64]，enumerate() 同时提供索引 idx 和元素引用，无需手写易越界的下标循环。',
+      guard: '消除数组越界 panic 风险，且在热路径上不额外拷贝历史成交量曲线数组。',
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+接下来看父单执行器如何守住**在途容量守恒不变量**：
+
+<AnnotatedCode
+  client:visible
+  title="父单在途容量守恒（PendingCancel 必须占额度）"
+  filePath="父单容量守卫"
+  code={`#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildStatus {
+    Working,
+    PendingCancel,
+    Filled,
+    Canceled,
+}
+
+pub struct ChildSlice {
+    pub orig_qty: u64,
+    pub filled_qty: u64,
+    pub status: ChildStatus,
+}
+
+pub struct ParentOrder {
+    pub target_qty: u64,
+    pub children: Vec<ChildSlice>,
+}
+
+impl ParentOrder {
+    pub fn available_to_release(&self) -> u64 {
+        let committed: u64 = self.children.iter().map(|c| match c.status {
+            ChildStatus::Working | ChildStatus::PendingCancel => c.orig_qty,
+            ChildStatus::Filled | ChildStatus::Canceled => c.filled_qty,
+        }).sum();
+        self.target_qty.saturating_sub(committed)
+    }
+}`}
+  annotations={[
+    {
+      id: 'r04-capacity-invariant',
+      match: 'ChildStatus::Working | ChildStatus::PendingCancel => c.orig_qty,',
+      label: '容量不变量',
+      plain: '用 match 模式把 Working 和 PendingCancel 归为同一类：只要撤单还没被交易所终态确认，该子单就按原始委托量 orig_qty 全额占坑。',
+      guard: '彻底封死“撤单在途期间重发补单，结果原单与补单双双成交导致父单超买”的经典实盘事故。',
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+---
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="父单目标是买入 1,000 股。当前已发出子单 A（委托 400 股，已成交 100 股，刚发出撤单指令处于 `PendingCancel`）和子单 B（委托 300 股，已确认 `Canceled`，其中成交了 50 股）。此时父单最多还能再新发多少股子单？"
+  options={[
+    { label: 'A', text: '850 股（1000 - 已成交 100 - 已成交 50）。' },
+    { label: 'B', text: '550 股（1000 - 子单 A 占用的 400 - 子单 B 已成交的 50）。' },
+    { label: 'C', text: '300 股（1000 - 子单 A 委托 400 - 子单 B 委托 300）。' },
+    { label: 'D', text: '600 股（只扣掉子单 A 的 400，忽略已撤单的子单 B）。' },
+  ]}
+  correctIndex={1}
+  explanation="子单 A 虽然处于 PendingCancel，但在交易所确认撤单成功前，剩下 300 股仍可能随时成交，因此必须全额占用 400 股额度；子单 B 已经终态 Canceled，未成交的 250 股额度已安全释放，只需计入已成交的 50 股。总占用 450 股，最多只能再发 550 股。"
+/>
+
+---
+
+## 4. 工程检查清单
+
+- **拆单总量必须精确守恒**：所有子单切片之和必须严格等于 `target_qty`，用整数余数分配取代浮点乘法与四舍五入。
+- **`PendingCancel` 视同活跃在途占用**：在收到交易所明确撤单终态前，绝不提前释放任何剩余额度。
+- **每次发子单前重算 `available_to_release()`**：不要靠手动加减一个容易漏改的 `remaining` 缓存变量，直接从子单状态聚合最稳妥。

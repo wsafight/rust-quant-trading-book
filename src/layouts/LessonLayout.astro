@@ -1,0 +1,413 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import BrandIcon from '../components/ui/BrandIcon.astro';
+import { CURRICULUM, STAGES } from '../data/curriculum';
+import { withBase } from '../lib/url';
+
+interface Props {
+  slug: string;
+  lessonNumber: number;
+  lessonCode: string;
+  stage: number;
+  stageName: string;
+  title: string;
+  subtitle: string;
+  readMinutes: number;
+  quantFocus: string[];
+  labName: string;
+  rustChapterSlug?: string;
+  rustChapterTitle?: string;
+}
+
+const props = Astro.props;
+const liveLessons = CURRICULUM.filter((l) => l.status === 'live');
+const currentLiveIndex = liveLessons.findIndex((l) => l.slug === props.slug);
+const prevLesson = currentLiveIndex > 0 ? liveLessons[currentLiveIndex - 1] : null;
+const nextLesson =
+  currentLiveIndex >= 0 && currentLiveIndex < liveLessons.length - 1
+    ? liveLessons[currentLiveIndex + 1]
+    : null;
+---
+
+<BaseLayout title={`${props.lessonCode}：${props.title}`} description={props.subtitle}>
+  <!-- Top Reading Progress Bar -->
+  <div class="fixed top-0 left-0 right-0 z-50 h-0.5 bg-transparent">
+    <div
+      id="reading-progress-bar"
+      class="h-full w-0 bg-gradient-to-r from-emerald-500 via-teal-400 to-sky-500 transition-[width] duration-75"
+    >
+    </div>
+  </div>
+
+  <!-- Minimal Sticky Header -->
+  <header class="sticky top-0 z-40 border-b border-slate-200/80 dark:border-slate-800/80 bg-slate-50/85 dark:bg-[#0b1017]/85 backdrop-blur-md">
+    <div class="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 gap-2">
+      <div class="flex items-center gap-3 min-w-0">
+        <a
+          href={withBase('/')}
+          class="flex items-center gap-2 font-bold tracking-tight text-slate-900 dark:text-white hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors shrink-0"
+        >
+          <BrandIcon class="h-7 w-7 shrink-0" />
+          <span class="hidden sm:inline">QuantLab</span>
+        </a>
+        <span class="text-slate-300 dark:text-slate-700">/</span>
+        <span class="truncate text-sm text-slate-600 dark:text-slate-400">
+          {props.lessonCode} · {props.title}
+        </span>
+      </div>
+
+      <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <!-- Dual-book Switcher -->
+        <div class="hidden xl:flex items-center rounded-lg border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/70 p-0.5 text-xs">
+          <a
+            href={withBase('/')}
+            class="rounded-md bg-emerald-500/15 px-2.5 py-1 font-semibold text-emerald-700 dark:text-emerald-300"
+          >
+            交易主书
+          </a>
+          <a
+            href={withBase('/rust')}
+            class="rounded-md px-2.5 py-1 font-medium text-slate-500 hover:text-amber-600 dark:hover:text-amber-300 transition-colors"
+          >
+            Rust 实战书
+          </a>
+        </div>
+
+        <button
+          id="mobile-toc-btn"
+          type="button"
+          class="lg:hidden inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/70 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:border-emerald-500/40 transition-colors cursor-pointer"
+          aria-label="打开课程目录"
+        >
+          <span>目录</span>
+        </button>
+        <button
+          type="button"
+          onclick="window.__openQuantPalette('search')"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/70 px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-emerald-500/40 transition-colors cursor-pointer"
+          title="快捷键 Cmd+K / Ctrl+K 搜索课程与术语"
+        >
+          <span>搜索</span>
+          <kbd class="hidden sm:inline rounded bg-slate-200/70 dark:bg-slate-800 px-1 py-0.5 font-mono text-[10px]">⌘K</kbd>
+        </button>
+        <button
+          type="button"
+          onclick="window.__openQuantPalette('glossary')"
+          class="hidden md:inline-flex items-center rounded-lg border border-teal-500/30 bg-teal-500/10 px-2.5 py-1.5 text-xs font-medium text-teal-700 dark:text-teal-300 hover:border-teal-500/60 transition-colors cursor-pointer"
+          title="随时查阅白话交易术语词典"
+        >
+          术语词典
+        </button>
+        <button
+          id="focus-mode-btn"
+          type="button"
+          class="hidden lg:inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/70 px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-emerald-500/40 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer"
+          title="切换专注阅读模式"
+        >
+          <span>专注模式</span>
+        </button>
+        <button
+          type="button"
+          onclick="window.__toggleQuantTheme()"
+          class="inline-flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/70 px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-emerald-500/40 transition-colors cursor-pointer"
+          title="切换浅色 / 深色主题"
+        >
+          <span class="dark:hidden">深色</span>
+          <span class="hidden dark:inline">浅色</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Mobile Slide-Over TOC Drawer -->
+  <div id="mobile-toc-drawer" class="fixed inset-0 z-50 hidden lg:hidden">
+    <div id="mobile-toc-backdrop" class="absolute inset-0 bg-slate-950/60 backdrop-blur-xs"></div>
+    <div class="relative z-10 h-full w-80 max-w-[85vw] overflow-y-auto border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0b1017] p-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-200 dark:border-slate-800">
+        <span class="text-sm font-bold text-slate-900 dark:text-white">全书 {liveLessons.length} 篇目录</span>
+        <button
+          id="mobile-toc-close"
+          type="button"
+          class="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+        >
+          关闭
+        </button>
+      </div>
+      <div class="mb-4 flex gap-1.5 text-xs">
+        <a href={withBase('/')} class="flex-1 text-center rounded-lg bg-emerald-500/15 py-1.5 font-semibold text-emerald-700 dark:text-emerald-300">
+          交易主书
+        </a>
+        <a href={withBase('/rust')} class="flex-1 text-center rounded-lg border border-slate-200 dark:border-slate-800 py-1.5 font-medium text-slate-600 dark:text-slate-300">
+          Rust 实战书
+        </a>
+      </div>
+      <nav class="space-y-4">
+        {STAGES.map((stageMeta) => {
+          const stageLessons = CURRICULUM.filter((l) => l.stage === stageMeta.stage);
+          return (
+            <div>
+              <div class="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">
+                阶段 {stageMeta.stage} · {stageMeta.name}
+              </div>
+              <ul class="space-y-0.5">
+                {stageLessons.map((item) => {
+                  const isActive = item.slug === props.slug;
+                  return (
+                    <li>
+                      <a
+                        href={withBase(`/lessons/${item.slug}`)}
+                        aria-current={isActive ? 'page' : undefined}
+                        class={`flex items-start gap-2 rounded-lg px-2.5 py-2 text-[13px] leading-snug transition-colors ${
+                          isActive
+                            ? 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-300 font-semibold border border-emerald-500/25'
+                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800/60'
+                        }`}
+                      >
+                        <span
+                          data-lesson-dot={item.slug}
+                          class="mt-1 inline-block h-2 w-2 shrink-0 rounded-full bg-slate-300 dark:bg-slate-700"
+                        />
+                        <span class="flex-1">
+                          <span class="font-mono text-[11px] opacity-60 mr-1">
+                            {item.lessonCode}
+                          </span>
+                          {item.title}
+                        </span>
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
+      </nav>
+    </div>
+  </div>
+
+  <div class="lesson-grid mx-auto grid max-w-7xl grid-cols-1 lg:grid-cols-[270px_minmax(0,1fr)] gap-8 px-4 sm:px-6 py-8">
+    <!-- Left Sidebar: 23-Lesson Beginner Curriculum -->
+    <aside class="lesson-sidebar hidden lg:block">
+      <div id="lesson-sidebar-scroll" class="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto pr-2 space-y-5">
+        <div class="rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white/60 dark:bg-slate-900/40 p-3.5">
+          <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-1.5">
+            <span>全书进度</span>
+            <span id="sidebar-progress-text" class="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+              0 / {liveLessons.length}
+            </span>
+          </div>
+          <div class="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+            <div id="sidebar-progress-fill" class="h-full w-0 bg-emerald-500 transition-all duration-300"></div>
+          </div>
+        </div>
+
+        <nav class="space-y-4">
+          {STAGES.map((stageMeta) => {
+            const stageLessons = CURRICULUM.filter((l) => l.stage === stageMeta.stage);
+            return (
+              <div>
+                <div class="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">
+                  阶段 {stageMeta.stage} · {stageMeta.name}
+                </div>
+                <ul class="space-y-0.5">
+                  {stageLessons.map((item) => {
+                    const isActive = item.slug === props.slug;
+                    return (
+                      <li>
+                        <a
+                          href={withBase(`/lessons/${item.slug}`)}
+                          aria-current={isActive ? 'page' : undefined}
+                          class={`group flex items-start gap-2 rounded-lg px-2.5 py-2 text-[13px] leading-snug transition-colors ${
+                            isActive
+                              ? 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-300 font-semibold border border-emerald-500/25'
+                              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-slate-100'
+                          }`}
+                        >
+                          <span
+                            data-lesson-dot={item.slug}
+                            class="mt-1 inline-block h-2 w-2 shrink-0 rounded-full bg-slate-300 dark:bg-slate-700"
+                          />
+                          <span class="flex-1">
+                            <span class="font-mono text-[11px] opacity-60 mr-1">
+                              {item.lessonCode}
+                            </span>
+                            {item.title}
+                          </span>
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            );
+          })}
+        </nav>
+      </div>
+    </aside>
+
+    <!-- Main Lesson Content -->
+    <main class="min-w-0 max-w-3xl">
+      <!-- Lesson Hero Header -->
+      <header class="mb-10 pb-8 border-b border-slate-200 dark:border-slate-800/90">
+        <div class="flex flex-wrap items-center gap-2 text-xs font-medium mb-4">
+          <span class="inline-flex items-center rounded-full bg-emerald-500/12 text-emerald-700 dark:text-emerald-300 px-2.5 py-1 border border-emerald-500/25">
+            阶段 {props.stage} · {props.stageName}
+          </span>
+          <span class="inline-flex items-center rounded-full bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2.5 py-1 font-mono">
+            约 {props.readMinutes} 分钟 · 零代码阅读
+          </span>
+          <span class="inline-flex items-center rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20 px-2.5 py-1">
+            沙盒：{props.labName}
+          </span>
+        </div>
+
+        <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white leading-tight">
+          {props.title}
+        </h1>
+        <p class="mt-3 text-lg text-slate-600 dark:text-slate-400 leading-relaxed">
+          {props.subtitle}
+        </p>
+
+        <div class="mt-6 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white/70 dark:bg-slate-900/50 p-4 text-xs">
+          <div class="flex items-center justify-between gap-2 mb-2">
+            <span class="text-slate-400 dark:text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
+              本篇你将看懂
+            </span>
+            <span class="text-[11px] text-teal-600 dark:text-teal-400">
+              文中带虚线的专业词可随时点击看白话解释
+            </span>
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            {props.quantFocus.map((item) => (
+              <span class="rounded-md bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-slate-700 dark:text-slate-200">
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      <!-- MDX Content -->
+      <article class="lesson-prose">
+        <slot />
+      </article>
+
+      <!-- Bottom Completion & Navigation Footer -->
+      <footer class="mt-14 pt-8 border-t border-slate-200 dark:border-slate-800 space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 p-5">
+          <div>
+            <div class="text-sm font-semibold text-slate-900 dark:text-white">
+              看懂这一篇了吗？
+            </div>
+            <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              学习进度保存在本机浏览器，随时回来继续
+            </div>
+          </div>
+          <button
+            id="toggle-complete-btn"
+            type="button"
+            data-slug={props.slug}
+            class="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all cursor-pointer bg-emerald-600 text-white hover:bg-emerald-500"
+          >
+            标记本篇已完成
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {prevLesson ? (
+            <a
+              href={withBase(`/lessons/${prevLesson.slug}`)}
+              class="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/40 p-4 hover:border-emerald-500/50 transition-colors"
+            >
+              <div class="text-xs text-slate-400 mb-1">← 上一篇</div>
+              <div class="font-semibold text-slate-900 dark:text-slate-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
+                {prevLesson.lessonCode}：{prevLesson.title}
+              </div>
+            </a>
+          ) : (
+            <a
+              href={withBase('/')}
+              class="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/40 p-4 hover:border-emerald-500/50 transition-colors"
+            >
+              <div class="text-xs text-slate-400 mb-1">← 返回书目首页</div>
+              <div class="font-semibold text-slate-900 dark:text-slate-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
+                查看全部 {liveLessons.length} 篇零基础课程
+              </div>
+            </a>
+          )}
+
+          {nextLesson ? (
+            <a
+              href={withBase(`/lessons/${nextLesson.slug}`)}
+              class="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/40 p-4 text-right hover:border-emerald-500/50 transition-colors"
+            >
+              <div class="text-xs text-slate-400 mb-1">下一篇 →</div>
+              <div class="font-semibold text-slate-900 dark:text-slate-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
+                {nextLesson.lessonCode}：{nextLesson.title}
+              </div>
+            </a>
+          ) : (
+            <a
+              href={withBase('/')}
+              class="group rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-right hover:border-emerald-500/60 transition-colors"
+            >
+              <div class="text-xs text-emerald-600 dark:text-emerald-400 mb-1">全书完结 · 返回首页 →</div>
+              <div class="font-semibold text-slate-900 dark:text-slate-100">
+                查看你的全站学习进度
+              </div>
+            </a>
+          )}
+        </div>
+
+        {/* Subtle optional link to companion Rust engineering book */}
+        {props.rustChapterSlug && (
+          <div class="rounded-xl border border-slate-200/70 dark:border-slate-800/80 bg-slate-100/50 dark:bg-slate-900/30 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+            <span>
+              对程序员延伸阅读：想看这套交易机制在 Rust 里怎么写？
+            </span>
+            <a
+              href={withBase(`/rust/${props.rustChapterSlug}`)}
+              class="shrink-0 font-medium text-amber-700 dark:text-amber-300 hover:underline"
+            >
+              前往《Rust 实战书》{props.rustChapterTitle ? `· ${props.rustChapterTitle}` : ''} →
+            </a>
+          </div>
+        )}
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    import { toggleLessonComplete } from '../lib/progress';
+    import { initReaderLayout } from '../lib/readerControls';
+    import { LIVE_LESSONS } from '../data/curriculum';
+
+    initReaderLayout({
+      validSlugs: LIVE_LESSONS.map((l) => l.slug),
+      getCompleted: (p) => p.completedLessons,
+      onToggleComplete: toggleLessonComplete,
+      sidebarScrollKey: 'quant-lesson-sidebar-scroll',
+      ids: {
+        sidebarScroll: 'lesson-sidebar-scroll',
+        mobileBtn: 'mobile-toc-btn',
+        mobileDrawer: 'mobile-toc-drawer',
+        mobileClose: 'mobile-toc-close',
+        mobileBackdrop: 'mobile-toc-backdrop',
+        completeBtn: 'toggle-complete-btn',
+        progressText: 'sidebar-progress-text',
+        progressFill: 'sidebar-progress-fill',
+      },
+      dotAttr: 'data-lesson-dot',
+      dotDatasetKey: 'lessonDot',
+      dotActiveClass: 'bg-emerald-500',
+      completeLabels: {
+        done: '✓ 已完成本篇（点击取消）',
+        todo: '标记本篇已完成',
+      },
+      completeClasses: {
+        done: 'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all cursor-pointer border border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20',
+        todo: 'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all cursor-pointer bg-emerald-600 text-white hover:bg-emerald-500',
+      },
+    });
+  </script>
+</BaseLayout>

@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 dark:bg-[#0b1017] dark:text-slate-100 transition-colors duration-200;
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Editorial prose styling for MDX lesson content */
+.lesson-prose {
+  @apply text-[16px] leading-[1.85] text-slate-700 dark:text-slate-300;
+}
+
+.lesson-prose h2 {
+  @apply mt-12 mb-4 text-2xl font-bold tracking-tight leading-snug text-slate-900 dark:text-slate-50 scroll-mt-24;
+}
+
+.lesson-prose h2 > code,
+.lesson-prose h3 > code {
+  @apply mx-1 align-baseline;
+}
+
+.lesson-prose h3 {
+  @apply mt-8 mb-3 text-lg font-semibold text-slate-900 dark:text-slate-100 scroll-mt-24;
+}
+
+.lesson-prose p {
+  @apply my-4;
+}
+
+.lesson-prose ul {
+  @apply my-4 space-y-2 list-disc pl-5;
+}
+
+.lesson-prose ol {
+  @apply my-4 space-y-2 list-decimal pl-5;
+}
+
+.lesson-prose li strong {
+  @apply text-slate-900 dark:text-slate-100;
+}
+
+.lesson-prose strong {
+  @apply font-semibold text-slate-900 dark:text-slate-100;
+}
+
+.lesson-prose blockquote {
+  @apply my-6 border-l-4 border-emerald-500/80 bg-emerald-50/70 dark:bg-emerald-950/25 px-5 py-3.5 rounded-r-xl text-slate-700 dark:text-slate-200;
+}
+
+.lesson-prose blockquote p {
+  @apply my-1.5;
+}
+
+.lesson-prose :not(pre) > code {
+  @apply rounded-md bg-slate-200/75 dark:bg-slate-800/90 px-1.5 py-0.5 text-[0.875em] font-mono text-emerald-700 dark:text-emerald-300;
+}
+
+.lesson-prose pre {
+  @apply my-5 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 p-4 text-[13.5px] leading-relaxed;
+}
+
+/* Shiki dual-theme support for class-based dark mode */
+.dark .astro-code,
+.dark .astro-code span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+  text-decoration: var(--shiki-dark-text-decoration) !important;
+}
+
+.lesson-prose table {
+  @apply my-6 block w-full overflow-x-auto border-collapse text-sm rounded-xl border border-slate-200 dark:border-slate-800;
+}
+
+.lesson-prose thead,
+.lesson-prose tbody {
+  @apply w-full;
+}
+
+.lesson-prose th {
+  @apply bg-slate-100 dark:bg-slate-900/90 px-4 py-2.5 text-left font-semibold text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-slate-800;
+}
+
+.lesson-prose td {
+  @apply px-4 py-2.5 border-b border-slate-200/70 dark:border-slate-800/70;
+}
+
+.lesson-prose hr {
+  @apply my-10 border-slate-200 dark:border-slate-800;
+}
+
+/* Focus mode hides sidebar */
+body.focus-mode .lesson-sidebar {
+  display: none !important;
+}
+body.focus-mode .lesson-grid {
+  grid-template-columns: minmax(0, 1fr) !important;
+  max-width: 52rem;
+}

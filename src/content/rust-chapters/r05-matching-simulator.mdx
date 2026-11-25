@@ -1,0 +1,161 @@
+---
+chapterNumber: 5
+chapterCode: "R05"
+part: 2
+partName: "撮合、执行与风控核心"
+title: "确定性撮合模拟器与 L2 排队模型"
+subtitle: "用 Rust 枚举把 Touch、TradeThrough 与 L2Queue 三种成交假设写在同一引擎里"
+readMinutes: 14
+rustConcepts:
+  - "enum 撮合模型"
+  - "saturating_sub 队列消耗"
+  - "单调时钟校验"
+  - "原子序号分配"
+engineeringGoal: "构建支持延迟建模、排队消耗与原子序号分配的离线撮合器"
+quantLessonSlug: "08-event-driven-backtest-models"
+quantLessonTitle: "08：为什么“历史回测年化 200%”，一买真钱就亏？"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+几乎所有“回测年化 200%、实盘第一天就亏钱”的策略，罪魁祸首都是撮合模拟器过于乐观，犯了三个典型错误：
+
+1. **一触价就默认全额成交（Touch 幻想）**：你在买一价 100.00 挂了 10 手限价单，其实你前面已经排着 500 手别人的单子。市场上刚刚成交了 1 手 100.00，简陋回测器就欢天喜地给你算成交了——实际在实盘里，你根本没轮到队头。
+2. **忽略单调时钟，允许“未来数据穿越”**：历史日志里偶尔夹杂乱序时间戳，如果撮合器不强制检验时间单调递增，策略就会用未来的成交价给过去的挂单撮合，造出惊人的虚假收益。
+3. **非确定性撮合导致 Bug 无法复现**：用随机 UUID 或系统当前时间给成交回报编号，跑两次回测结果都不一样，排查策略缺陷如同大海捞针。
+
+真正靠谱的离线撮合器，必须支持按需切换保守/激进成交假设（`Touch`、`TradeThrough`、`L2Queue`），并且做到**同一份输入流跑 100 次，输出 100% 比特级一致**。
+
+---
+
+## 2. 核心 Rust 设计与在线语法点读
+
+下面这段核心代码用枚举把三种撮合假设收敛到同一套判定函数里，同时引入了单调时钟守卫、饱和队列扣减以及原子递增成交序号。
+
+<AnnotatedCode
+  client:visible
+  title="多假设确定性撮合引擎与 L2 排队消耗"
+  filePath="确定性撮合器"
+  code={`use std::sync::atomic::{AtomicU64, Ordering};
+
+#[derive(Debug, Clone, Copy)]
+pub enum FillModel {
+    Touch,
+    TradeThrough,
+    L2Queue { queue_ahead: u64 },
+}
+
+pub struct RestingBuyOrder {
+    pub limit_price: i64,
+    pub remaining_qty: u64,
+    pub model: FillModel,
+}
+
+pub struct SimMatcher {
+    last_ts_ns: u64,
+    next_fill_id: AtomicU64,
+}
+
+impl SimMatcher {
+    pub fn on_market_trade(
+        &mut self,
+        ts_ns: u64,
+        trade_price: i64,
+        trade_qty: u64,
+        order: &mut RestingBuyOrder,
+    ) -> Result<Option<(u64, u64)>, &'static str> {
+        if ts_ns < self.last_ts_ns {
+            return Err("non-monotonic clock detected");
+        }
+        self.last_ts_ns = ts_ns;
+
+        let filled_qty = match &mut order.model {
+            FillModel::Touch if trade_price <= order.limit_price => {
+                order.remaining_qty.min(trade_qty)
+            }
+            FillModel::TradeThrough if trade_price < order.limit_price => {
+                order.remaining_qty.min(trade_qty)
+            }
+            FillModel::L2Queue { queue_ahead } if trade_price < order.limit_price => {
+                *queue_ahead = 0;
+                order.remaining_qty.min(trade_qty)
+            }
+            FillModel::L2Queue { queue_ahead } if trade_price == order.limit_price => {
+                let overflow = trade_qty.saturating_sub(*queue_ahead);
+                *queue_ahead = queue_ahead.saturating_sub(trade_qty);
+                order.remaining_qty.min(overflow)
+            }
+            _ => 0,
+        };
+
+        if filled_qty == 0 {
+            return Ok(None);
+        }
+        order.remaining_qty -= filled_qty;
+        let fill_id = self.next_fill_id.fetch_add(1, Ordering::Relaxed);
+        Ok(Some((fill_id, filled_qty)))
+    }
+}`}
+  annotations={[
+    {
+      id: 'r05-fill-model',
+      match: 'pub enum FillModel',
+      label: 'enum 撮合模型',
+      plain: '把三种成交假设放进同一个枚举，其中 L2Queue 变体还自带一个专属字段 queue_ahead 记录排在你前面的挂单量。',
+      guard: '同一套策略代码无需改动一行，只要切换 FillModel 就能对比“乐观触价”与“保守排队”下的真实收益衰减。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r05-monotonic-clock',
+      match: 'if ts_ns < self.last_ts_ns',
+      label: '单调时钟校验',
+      plain: '强制要求每条进入撮合器的行情时间戳必须大于等于上一条，发现时间倒流立刻返回 Err 拒绝撮合。',
+      guard: '拦截历史数据乱序拼接导致的“未来函数穿越”，守住回测的时间因果律。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r05-saturating-sub',
+      match: 'queue_ahead.saturating_sub(trade_qty)',
+      label: 'saturating_sub 队列消耗',
+      plain: '饱和减法：当减数大于被减数时，结果稳稳停在 0，不会像普通无符号减法那样下溢 panic 或回绕成极大值。',
+      guard: '排队消耗是高频核心路径，当一笔大成交直接打穿你前面的队列时，队列余量安全归零，多出的成交量精准溢出给你的挂单。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r05-atomic-seq',
+      match: 'self.next_fill_id.fetch_add(1, Ordering::Relaxed)',
+      label: '原子序号分配',
+      plain: '用无锁原子计数器顺序生成 0, 1, 2... 确定性成交编号，替代随机 UUID 或系统时间戳。',
+      guard: '保证回测输出完全可复现，每次回放的每笔成交 ID 严丝合缝，方便回归对比与账本幂等对账。',
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+---
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="在 `L2Queue` 模式下，你在 100.00 挂了 20 手买单，下单时排在你前面有 `queue_ahead = 50` 手。随后市场上在 100.00 成交了一笔 60 手卖单。按照上面的代码，你会成交多少手，剩余排队量变成多少？"
+  options={[
+    { label: 'A', text: '成交 20 手，queue_ahead 变成 0。' },
+    { label: 'B', text: '成交 10 手，queue_ahead 变成 0，order.remaining_qty 变成 10。' },
+    { label: 'C', text: '成交 0 手，因为 100.00 没有打穿（TradeThrough）你的限价。' },
+    { label: 'D', text: '发生 u64 下溢 panic，因为 50 - 60 小于 0。' },
+  ]}
+  correctIndex={1}
+  explanation="60 手同价位成交先消耗掉排在前面的 50 手，overflow = 60.saturating_sub(50) = 10 手，queue_ahead 通过 saturating_sub 安全归零不会下溢。你的 20 手买单吃下溢出的 10 手，剩余 10 手继续留在队头等待下一笔成交。"
+/>
+
+---
+
+## 4. 工程检查清单
+
+- **回测必须做多模型压力对比**：策略至少要通过 `L2Queue` 或 `TradeThrough` 验证，只在 `Touch` 下盈利的策略禁止上实盘。
+- **所有队列扣减使用 `saturating_sub`**：防止无符号整数下溢崩溃或回绕。
+- **拒绝外部系统时钟与随机数**：撮合器只认事件自带的单调时间戳，用确定性自增 ID 保证 100% 可复现。

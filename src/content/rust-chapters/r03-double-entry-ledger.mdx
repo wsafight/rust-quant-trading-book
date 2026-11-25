@@ -1,0 +1,170 @@
+---
+chapterNumber: 3
+chapterCode: "R03"
+part: 1
+partName: "零误差数据底座"
+title: "双式记账、均价反手与幂等对账"
+subtitle: "用 i128 算清多空反手盈亏，用 HashSet 幂等键拦住重复成交回报"
+readMinutes: 14
+rustConcepts:
+  - "i128 防溢出"
+  - "HashMap 幂等记录"
+  - "checked_add / checked_sub"
+  - "不可变账本流"
+engineeringGoal: "实现零误差已实现盈亏、持仓均价更新、部分平仓反手与幂等去重"
+quantLessonSlug: "07-double-entry-ledger-pnl"
+quantLessonTitle: "07：赚了还是亏了？交易账户到底怎么算账才不出错"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+成交回报（Fill）是整个交易系统里最值钱的数据流，也是最容易算糊涂的地方。实盘里常见的账本崩坏场景有三类：
+
+1. **网络重传导致重复记账**：交易所断线重连后，经常会把同一笔 `fill_id` 重新推送一次。如果没有幂等去重，账本会记两遍成交，持仓凭空翻倍，风控和策略全线错乱。
+2. **多空直接反手（Flip）时均价算错**：当前持有 `+10` 手多单（均价 100），突然成交一笔 `-15` 手卖单（价格 102）。很多新手直接用加权平均公式套上去，结果把平仓盈亏和新开空仓的成本混成一团烂账——正确做法必须拆成“先平掉 `+10` 手并结算已实现盈亏，再以 `102` 为成本新开 `-5` 手空单”。
+3. **只改内存余额、不留不可变流水**：一旦盘后对账差了 1 块钱，如果账本只有覆盖更新后的最终数字，根本无从回溯到底是哪笔手续费还是哪次反手算错了。
+
+---
+
+## 2. 核心 Rust 设计与在线语法点读
+
+下面这段双式账本核心把**幂等去重**、**多空反手拆解**、**`i128` 零误差盈亏计算**以及**追加式不可变分录流**整合在一起：
+
+<AnnotatedCode
+  client:visible
+  title="带幂等防重与多空反手的整数账本"
+  filePath="双式账本核心"
+  code={`use std::collections::HashMap;
+
+#[derive(Debug, Clone, Copy)]
+pub struct FillEvent {
+    pub fill_id: u64,
+    pub signed_qty: i64,   // 正数买入，负数卖出
+    pub price_ticks: i64,
+    pub fee_ticks: i128,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LedgerEntry {
+    pub fill_id: u64,
+    pub cash_delta: i128,
+    pub realized_pnl: i128,
+}
+
+pub struct PositionLedger {
+    net_qty: i64,
+    avg_cost_ticks: i64,
+    cash_ticks: i128,
+    realized_pnl: i128,
+    applied_fills: HashMap<u64, LedgerEntry>,
+    journal: Vec<LedgerEntry>,
+}
+
+impl PositionLedger {
+    pub fn apply_fill(&mut self, fill: FillEvent) -> Result<Option<LedgerEntry>, &'static str> {
+        if self.applied_fills.contains_key(&fill.fill_id) {
+            return Ok(None);
+        }
+        let closing_qty = if self.net_qty.signum() * fill.signed_qty.signum() < 0 {
+            self.net_qty.abs().min(fill.signed_qty.abs())
+        } else {
+            0
+        };
+        let pnl_per_lot = i128::from(fill.price_ticks - self.avg_cost_ticks);
+        let gross_pnl = pnl_per_lot
+            .checked_mul(i128::from(closing_qty) * i128::from(self.net_qty.signum()))
+            .ok_or("pnl overflow")?;
+        let realized = gross_pnl.checked_sub(fill.fee_ticks).ok_or("fee overflow")?;
+
+        let new_qty = self.net_qty.checked_add(fill.signed_qty).ok_or("qty overflow")?;
+        if new_qty == 0 {
+            self.avg_cost_ticks = 0;
+        } else if self.net_qty == 0 || self.net_qty.signum() != new_qty.signum() {
+            self.avg_cost_ticks = fill.price_ticks;
+        } else if closing_qty == 0 {
+            let old_val = i128::from(self.net_qty.abs()) * i128::from(self.avg_cost_ticks);
+            let add_val = i128::from(fill.signed_qty.abs()) * i128::from(fill.price_ticks);
+            self.avg_cost_ticks = ((old_val + add_val) / i128::from(new_qty.abs())) as i64;
+        }
+
+        let trade_cash = i128::from(-fill.signed_qty)
+            .checked_mul(i128::from(fill.price_ticks))
+            .and_then(|v| v.checked_sub(fill.fee_ticks))
+            .ok_or("cash overflow")?;
+
+        self.net_qty = new_qty;
+        self.cash_ticks = self.cash_ticks.checked_add(trade_cash).ok_or("balance overflow")?;
+        self.realized_pnl = self.realized_pnl.checked_add(realized).ok_or("total pnl overflow")?;
+
+        let entry = LedgerEntry { fill_id: fill.fill_id, cash_delta: trade_cash, realized_pnl: realized };
+        self.applied_fills.insert(fill.fill_id, entry);
+        self.journal.push(entry);
+        Ok(Some(entry))
+    }
+}`}
+  annotations={[
+    {
+      id: 'r03-idempotent-map',
+      match: 'if self.applied_fills.contains_key(&fill.fill_id)',
+      label: 'HashMap 幂等记录',
+      plain: '用成交唯一编号 fill_id 作为键查表；如果已经记过账，直接返回 Ok(None) 静默跳过，不重复修改余额和持仓。',
+      guard: '彻底免疫交易所断线重连后的重复推送，保证同一笔成交无论收到 1 次还是 10 次，账本结果完全一致。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r03-i128-pnl',
+      match: 'let pnl_per_lot = i128::from(fill.price_ticks - self.avg_cost_ticks);',
+      label: 'i128 防溢出',
+      plain: '在计算金额与盈亏前显式升维为 128 位有符号整数，提供高达 ±1.7×10^38 的精确整数范围。',
+      guard: '高频策略全天累计上亿笔成交时，资金余额和已实现盈亏依然精确到最小刻度，绝不溢出错乱。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r03-checked-ops',
+      match: 'self.cash_ticks.checked_add(trade_cash).ok_or("balance overflow")?',
+      label: 'checked_add / checked_sub',
+      plain: '每一次资金与持仓变更都走受检算术，一旦越界立即通过 ? 返回 Err，拒绝写入脏状态。',
+      guard: '避免出现局部字段更新成功、另一字段溢出回绕导致的资产负债表失衡。',
+      firstAppearance: false,
+    },
+    {
+      id: 'r03-journal',
+      match: 'self.journal.push(entry);',
+      label: '不可变账本流',
+      plain: '每笔有效成交都会生成一条只追加、不修改的 LedgerEntry 存入流水向量 journal 中。',
+      guard: '支持盘后逐笔审计与任意时间点重算核对：所有分录的 cash_delta 之和必须严格等于当前现金变动。',
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+注意代码中 `else if self.net_qty == 0 || self.net_qty.signum() != new_qty.signum()` 这一行：
+- 当从 `+10` 多单直接成交 `-15` 变成 `-5` 空单时，`self.net_qty.signum()`（`+1`）与 `new_qty.signum()`（`-1`）异号，系统会立刻把剩余 `-5` 手空单的成本均价重置为本次成交价 `fill.price_ticks`，而前面平掉的 `10` 手已经在 `closing_qty` 中精准结清了已实现盈亏。
+
+---
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="假设你当前持有 +10 手多单（均价 100），现在以 110 的价格卖出 4 手（部分平仓，剩余 +6 手多单）。此时持仓的开仓均价 `avg_cost_ticks` 应该变成多少？"
+  options={[
+    { label: 'A', text: '保持 100 不变；已平掉的 4 手结算 +40 盈亏，剩下 6 手的原始买入成本仍是 100。' },
+    { label: 'B', text: '降低为 (10×100 - 4×110) / 6 ≈ 93.33，把赚到的钱摊薄进成本价。' },
+    { label: 'C', text: '提高为 110，按最新成交价刷新持仓成本。' },
+    { label: 'D', text: '归零，等全部平仓后再重新计算。' },
+  ]}
+  correctIndex={0}
+  explanation="在标准双式记账中，部分平仓（减仓但未反手）绝不能改变剩余持仓的开仓均价，否则会把“已实现盈亏”和“未实现盈亏”重复计算或互相污染。上面的代码在 closing_qty > 0 且未反手时故意不改动 avg_cost_ticks，正是为了守住这条会计铁律。"
+/>
+
+---
+
+## 4. 工程检查清单
+
+- **幂等键先于一切计算**：任何成交回报进入账本的第一行代码必须是 `fill_id` 去重检查，杜绝重放翻倍。
+- **反手必须拆成“平旧仓 + 开新仓”**：先按旧均价结清 `min(|old|, |fill|)` 的已实现盈亏，再把异号剩余仓位的均价重置为新成交价。
+- **状态与流水双轨校验**：内存余额和 `journal` 追加流水同步写入，盘后可随时通过重放 `journal` 做 100% 零误差核账。

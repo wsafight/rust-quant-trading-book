@@ -1,0 +1,152 @@
+---
+chapterNumber: 14
+chapterCode: "R14"
+part: 4
+partName: "量化算法库与端到端边界"
+title: "全链路离线闭环与极端故障边界设计"
+subtitle: "把盘口、策略、风控、OMS、撮合与账本串成零误差闭环，复盘 17 类必测实盘边界"
+readMinutes: 15
+rustConcepts:
+  - "模块边界解耦"
+  - "数据流单向编排"
+  - "不变量边界清单"
+  - "端到端确定性闭环"
+engineeringGoal: "建立不依赖实盘网络的全链路确定性架构与重启对账防线"
+quantLessonSlug: "16-e2e-fault-recovery"
+quantLessonTitle: "16：断网、停电、软件闪退后，重启前必须做的 3 件事"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+前面 13 章，我们把整数刻度、L2 订单簿、双式账本、OMS 状态机、独立硬风控、单写者回放、有界背压与算法守卫逐一拆解打磨完毕。但很多团队在把各个模块拼成完整系统时，依然会在最后一步功亏一篑：
+
+1. **模块彼此互相持有可变引用，演变成一团意大利面**：策略直接改账本、OMS 直接调发单网络、风控偷偷读未经校准的本地缓存。任何一处小改动都会牵一发而动全身，且根本无法脱离实盘网络做端到端确定性演练。
+2. **只测“风和日丽”的快乐路径，从未测过极端边界与重启恢复**：平时模拟成交都正常，直到实盘某天闪退重启——程序开机既没拉取交易所挂单，也没对比账本持仓，更没锁住重启闸门，直接按空仓重新开仓，10 秒内把账户仓位翻倍。
+
+真正的工业级量化内核必须做到两点：**全链路数据流严格单向编排**（每个模块只做纯输入输出变换），以及**开机默认处于 `Reconciling`（对账锁定态），对账核验通过前绝不放行任何新订单**。
+
+## 2. 核心 Rust 设计与在线语法点读
+
+下面这段顶层编排代码展示了**全链路单向闭环引擎**如何把前面所有模块串成一个零锁、可离线 100% 复现的确定性核心，并把**重启对账闸门**焊死在入口处。点击高亮语法标签即可展开解析。
+
+<AnnotatedCode
+  client:visible
+  title="全链路单向编排引擎与重启对账闸门"
+  filePath="端到端闭环架构"
+  code={`#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemMode {
+    Reconciling,
+    LiveTrading,
+    Halted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepOutcome {
+    BlockedByMode(SystemMode),
+    RejectedByRisk,
+    OrderRouted(u64),
+    NoSignal,
+}
+
+pub struct TradingKernel<B, S, R, O, L> {
+    pub mode: SystemMode,
+    book: B,
+    strategy: S,
+    risk: R,
+    oms: O,
+    ledger: L,
+}
+
+impl<B, S, R, O, L> TradingKernel<B, S, R, O, L> {
+    pub fn new(book: B, strategy: S, risk: R, oms: O, ledger: L) -> Self {
+        Self {
+            mode: SystemMode::Reconciling,
+            book,
+            strategy,
+            risk,
+            oms,
+            ledger,
+        }
+    }
+
+    pub fn complete_reconciliation(&mut self, positions_match: bool, open_orders_synced: bool) {
+        if positions_match && open_orders_synced {
+            self.mode = SystemMode::LiveTrading;
+        } else {
+            self.mode = SystemMode::Halted;
+        }
+    }
+
+    pub fn guard_live_entry(&self) -> Result<(), StepOutcome> {
+        match self.mode {
+            SystemMode::LiveTrading => Ok(()),
+            other => Err(StepOutcome::BlockedByMode(other)),
+        }
+    }
+}`}
+  annotations={[
+    {
+      id: "r14-default-reconciling",
+      match: "mode: SystemMode::Reconciling",
+      label: "开机默认锁定对账态",
+      plain: "内核构造完成后默认处于 Reconciling 而非 LiveTrading，任何重启实例在未完成对账前都被硬性禁止发单。",
+      guard: "彻底消灭进程崩溃或断网重启后，本地空账本与交易所真实持仓不一致导致的重复开仓惨案。",
+      firstAppearance: true,
+    },
+    {
+      id: "r14-generic-decoupling",
+      match: "pub struct TradingKernel<B, S, R, O, L>",
+      label: "模块边界泛型解耦",
+      plain: "盘口(B)、策略(S)、风控(R)、OMS(O)、账本(L) 各自作为独立泛型成员由单一内核独占所有权，彼此不互相持有指针或锁。",
+      guard: "离线演练时可无缝注入确定性撮合模拟器，实盘时替换为真实网关适配器，核心风控与记账代码一字不改。",
+      firstAppearance: true,
+    },
+    {
+      id: "r14-reconcile-gate",
+      match: "if positions_match && open_orders_synced",
+      label: "双因子对账解锁",
+      plain: "只有当“本地账本持仓与交易所完全一致”且“所有在途挂单已同步进 OMS”同时成立时，才切入 LiveTrading；否则直接转入 Halted 人工介入。",
+      guard: "落实重启恢复铁律：宁可停机等待人工核查，也绝不带着未知在途单或错账盲跑。",
+      firstAppearance: true,
+    },
+    {
+      id: "r14-single-entry-guard",
+      match: "pub fn guard_live_entry(&self)",
+      label: "单向编排统一闸门",
+      plain: "每轮事件驱动前先过 guard_live_entry() 校验运行模式，只有返回 Ok(()) 才会继续沿着“盘口 → 策略 → 硬风控 → OMS → 路由”单向推进。",
+      guard: "保证 Kill Switch（Halted）和重启锁定（Reconciling）具有绝对否决权，没有任何策略分支能绕过总闸门偷偷发单。",
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+把全书 R01–R14 串起来，一套经得起实盘考验的量化系统，必须离线回归覆盖以下 **17 类核心不变量边界**（分四大防线）：
+
+- **数据与账本防线（5 类）**：① 价格/数量零浮点精度漂移 ② 非零多余小数拒收 ③ L2 序列断档与交叉盘口整本失效 ④ 多空反手均价与已实现盈亏精确守恒 ⑤ 重复成交回报幂等去重。
+- **执行与风控防线（5 类）**：⑥ 拆单 `PendingCancel` 持续占住父单容量 ⑦ 成交早于确认的 OMS 乱序吸收 ⑧ 终态绝不回退 ⑨ 本地 `timeout` 强制转 `Uncertain` 并计入最坏敞口 ⑩ 行情过期或 Kill Switch 触发时全量 Fail-Closed 拒单。
+- **并发与数值防线（4 类）**：⑪ 单写者全序键归并零竞态 ⑫ 时钟倒退与重复事件键立即中止 ⑬ 有界通道满载背压不 OOM ⑭ `NaN` / `Infinity` / 除零 / 越界概率在算法入口全部拦截。
+- **故障与恢复防线（3 类）**：⑮ 断网重连强制快照重同步 ⑯ 闪退重启默认锁定 `Reconciling` 等待持仓与挂单双对账 ⑰ 全链路离线事件流跑两遍按位 100% 一致。
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="交易程序在暴跌行情中意外闪退，30 秒后由守护进程自动拉起重启。重启瞬间，交易所里其实还有一笔 5 手的买单正在挂着。如果系统没有采用默认的 Reconciling 对账闸门，最可能发生什么？"
+  options={[
+    { label: "A", text: "不会有任何问题，交易所会自动把断线前的挂单全部撤销" },
+    { label: "B", text: "本地新进程以为在途挂单为 0，风控算出可用额度虚高，策略立刻又发出一笔买单导致超限双倍持仓" },
+    { label: "C", text: "Rust 的所有权机制会自动恢复闪退前的内存持仓和挂单状态" },
+    { label: "D", text: "只要重启后把日志重新打印一遍，持仓就会自动对齐" }
+  ]}
+  correctIndex={1}
+  explanation="进程闪退后内存状态全部清零，而交易所撮合引擎里的挂单并不会自动消失（除非显式开启且确认生效了 Cancel-on-Disconnect）。如果重启后默认直接进入 LiveTrading，本地风控会低估在途最坏敞口，极易引发超限开仓。因此重启必须先锁定在 Reconciling 态，完成挂单与持仓双对账后才能解锁交易。"
+/>
+
+## 4. 工程检查清单
+
+- **数据流坚持单向无环编排**：`协议解码 → 全序回放 → 盘口 → 策略/算法 → 硬风控 → OMS → 路由/撮合 → 双式账本`，每层只依赖上一层的确定性输出。
+- **重启默认 Fail-Closed**：系统启动恒定进入 `Reconciling` 态，必须通过“持仓一致 + 挂单同步”双核验才能解锁 `LiveTrading`，否则直接 `Halted`。
+- **把 17 类实盘边界做成离线回归铁律**：任何策略迭代或协议修改，都必须在离线确定性闭环里跑通全部极端故障场景后再谈实盘上线。

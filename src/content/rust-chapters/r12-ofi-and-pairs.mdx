@@ -1,0 +1,185 @@
+---
+chapterNumber: 12
+chapterCode: "R12"
+part: 4
+partName: "量化算法库与端到端边界"
+title: "微观结构 OFI 特征与配对单腿状态机"
+subtitle: "用 Ordering 三路匹配实现零分配 OFI，用状态枚举管住配对套利单腿超时强平"
+readMinutes: 14
+rustConcepts:
+  - "Ordering 三路匹配"
+  - "栈上 Copy 零分配"
+  - "双腿状态枚举"
+  - "除零守卫"
+engineeringGoal: "构建栈上 Copy 特征提取器与带协整破裂止损的配对状态机"
+quantLessonSlug: "17-order-flow-imbalance-alpha"
+quantLessonTitle: "17：怎么从排队人群的变化，猜出未来几秒涨还是跌？"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+短周期微观结构策略（如订单流不平衡 OFI）与统计套利配对交易，在实盘里最常死于两类截然不同的工程缺陷：
+
+1. **高频特征计算堆分配与分支遗漏**：OFI 每来一笔盘口更新就要计算一次买一/卖一队列变化。如果把历史快照塞进 `Vec` 反复分配、或者用层层嵌套的 `if / else if` 写价位对比，不仅微秒级延迟抖动严重，还极易漏掉“价位相等但挂单量变化”的分支；归一化时一旦盘口总量为 `0`，还会直接算出 `NaN`。
+2. **配对套利“瘸腿裸奔”（Legging Risk）**：配对策略本质是同时做多 A、做空 B 吃价差回归。普通代码常用两个布尔值 `has_leg_a: bool` 和 `has_leg_b: bool` 拼状态。实盘中一旦 A 腿成交了、B 腿却因为行情跳空一直没成交，且没有显式的单腿超时强平与协整破裂止损，原本号称“市场中性”的套利策略就会瞬间沦为毫无保护的单边方向性赌博。
+
+用 Rust 的 **`Copy` 栈结构体 + `Ordering` 三路匹配** 处理高频特征，再用 **带数据 `enum` 状态机** 锁死配对双腿生命周期，可以把这两类隐患一并消灭在编译期。
+
+## 2. 核心 Rust 设计与在线语法点读
+
+先看零堆分配的 **OFI（Order Flow Imbalance）特征提取器**。点击高亮语法标签即可展开原理解释。
+
+<AnnotatedCode
+  client:visible
+  title="零分配 OFI 特征计算：Ordering 三路匹配与除零守卫"
+  filePath="微观结构 OFI 特征提取"
+  code={`use std::cmp::Ordering;
+
+#[derive(Debug, Clone, Copy)]
+pub struct TopOfBook {
+    pub bid_px: i64,
+    pub bid_qty: i64,
+    pub ask_px: i64,
+    pub ask_qty: i64,
+}
+
+pub fn compute_normalized_ofi(prev: TopOfBook, curr: TopOfBook) -> Option<f64> {
+    let bid_flow = match curr.bid_px.cmp(&prev.bid_px) {
+        Ordering::Greater => curr.bid_qty,
+        Ordering::Equal => curr.bid_qty - prev.bid_qty,
+        Ordering::Less => -prev.bid_qty,
+    };
+
+    let ask_flow = match curr.ask_px.cmp(&prev.ask_px) {
+        Ordering::Less => curr.ask_qty,
+        Ordering::Equal => curr.ask_qty - prev.ask_qty,
+        Ordering::Greater => -prev.ask_qty,
+    };
+
+    let depth = curr.bid_qty + curr.ask_qty;
+    if depth <= 0 {
+        return None;
+    }
+    Some((bid_flow - ask_flow) as f64 / depth as f64)
+}`}
+  annotations={[
+    {
+      id: "r12-stack-copy",
+      match: "#[derive(Debug, Clone, Copy)]",
+      label: "栈上 Copy 零分配",
+      plain: "TopOfBook 仅含 4 个 i64（共 32 字节），实现 Copy 后直接按值在 CPU 寄存器/栈上传递，不触发任何堆内存分配。",
+      guard: "在每秒十万次盘口更新的热路径上保持恒定纳秒级延迟，杜绝垃圾回收或堆碎片引发的 P99 尖刺。",
+      firstAppearance: false,
+    },
+    {
+      id: "r12-ordering-match",
+      match: "match curr.bid_px.cmp(&prev.bid_px)",
+      label: "Ordering 三路匹配",
+      plain: "用 cmp() 一次比较产出 Ordering::{Greater, Equal, Less} 三种互斥结果，match 强制穷尽所有价格变动方向。",
+      guard: "精准覆盖“买一抬升（新买力涌入）”、“买一不变（挂单增减）”、“买一被砸穿（原买单撤离或吃光）”三种微观结构语义，绝不漏分支。",
+      firstAppearance: true,
+    },
+    {
+      id: "r12-zero-div-guard",
+      match: "if depth <= 0",
+      label: "除零守卫返回 Option",
+      plain: "在归一化除法前显式拦截盘口深度小于等于 0 的异常快照，返回 None 而非产生 NaN / Inf。",
+      guard: "当交易所盘口瞬间被清空或推送空档位时，上游信号模块不会把 NaN 喂进移动平均线，防止整条信号链中毒。",
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+再看配对套利的**双腿状态机**：把“单腿等待超时强平”和“协整 Z-score 破裂止损”直接编码进状态转移里，彻底杜绝非法布尔组合。
+
+<AnnotatedCode
+  client:visible
+  title="配对套利状态机：单腿超时强平与协整破裂止损"
+  filePath="配对双腿状态机"
+  code={`#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairState {
+    Flat,
+    SingleLegPending { filled_leg: u8, entered_ms: u64 },
+    Hedged { direction: i8 },
+    ForcedUnwind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairAction {
+    Hold,
+    UnwindSingleLegTimeout,
+    StopLossCointegrationBreak,
+}
+
+pub fn on_pair_tick(
+    state: PairState,
+    now_ms: u64,
+    z_score: f64,
+    leg_timeout_ms: u64,
+    z_stop_limit: f64,
+) -> (PairState, PairAction) {
+    match state {
+        PairState::SingleLegPending { entered_ms, .. }
+            if now_ms.saturating_sub(entered_ms) >= leg_timeout_ms =>
+        {
+            (PairState::ForcedUnwind, PairAction::UnwindSingleLegTimeout)
+        }
+        PairState::Hedged { .. }
+            if !z_score.is_finite() || z_score.abs() >= z_stop_limit =>
+        {
+            (PairState::ForcedUnwind, PairAction::StopLossCointegrationBreak)
+        }
+        other => (other, PairAction::Hold),
+    }
+}`}
+  annotations={[
+    {
+      id: "r12-pair-state-enum",
+      match: "SingleLegPending { filled_leg: u8, entered_ms: u64 }",
+      label: "双腿状态枚举",
+      plain: "只有当状态处于 SingleLegPending 时，才携带 filled_leg 和 entered_ms 时间戳；Flat 或 Hedged 状态下根本不存在多余字段。",
+      guard: "把“单腿裸露必须绑定入场时间戳”焊死在类型系统里，避免布尔标志位组合出“已对冲但只有一条腿”的非法幽灵状态。",
+      firstAppearance: true,
+    },
+    {
+      id: "r12-match-guard-timeout",
+      match: "now_ms.saturating_sub(entered_ms) >= leg_timeout_ms",
+      label: "饱和减法超时守卫",
+      plain: "使用 saturating_sub 计算单腿滞留时长，即使时钟轻微抖动也不会下溢 panic，超时立即切换为 ForcedUnwind。",
+      guard: "一旦第二条腿在规定毫秒内未成交，果断把第一条腿市价平掉，把瘸腿风险死死锁在可控秒级窗口内。",
+      firstAppearance: false,
+    },
+    {
+      id: "r12-coint-break",
+      match: "!z_score.is_finite() || z_score.abs() >= z_stop_limit",
+      label: "协整破裂止损守卫",
+      plain: "不仅在价差偏离超过 z_stop_limit（如 3.5 倍标准差）时触发强平，遇到 NaN 统计值也按 fail-closed 立即强平。",
+      guard: "防止两只原本相关的资产因突发基本面公告彻底脱钩时，策略继续死扛均值回归直到爆仓。",
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="在 compute_normalized_ofi 中，假设上一帧卖一价 ask_px = 10002、挂单量 ask_qty = 50；这一帧卖一价跌到了 ask_px = 10001、挂单量 ask_qty = 80。此时 ask_flow 应该等于多少，为什么？"
+  options={[
+    { label: "A", text: "80 - 50 = +30，因为只看挂单量差值" },
+    { label: "B", text: "+80，因为卖一价下移代表新压盘卖力在更低价位涌入，整档 80 手都是新增卖压" },
+    { label: "C", text: "-50，因为原卖一价位 10002 已经消失了" },
+    { label: "D", text: "0，因为买卖价差缩小不影响订单流" }
+  ]}
+  correctIndex={1}
+  explanation="在 OFI 定义中，卖盘方向与买盘正好相反：当 curr.ask_px < prev.ask_px（Ordering::Less）时，说明有卖方主动在更低价位挂出新卖单压盘，因此整档 curr.ask_qty (+80) 全部计为新增卖压 ask_flow；最终 OFI = bid_flow - ask_flow 为负，准确反映短期下行压力。"
+/>
+
+## 4. 工程检查清单
+
+- **高频特征坚持栈上 `Copy` 零分配**：用 `Ordering` 三路匹配把盘口价位升/平/降全部写透，并在除法前加 `depth <= 0` 守卫。
+- **配对套利严禁用零散布尔值管状态**：用 `PairState` 枚举显式区分 `Flat`、`SingleLegPending`、`Hedged` 与 `ForcedUnwind`。
+- **单腿超时与协整破裂同等最高优先级**：只要单腿滞留超时或 `z_score` 失真/破限，立即切入强平动作，绝不幻想行情回头。

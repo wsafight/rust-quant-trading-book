@@ -1,0 +1,158 @@
+---
+chapterNumber: 6
+chapterCode: "R06"
+part: 2
+partName: "撮合、执行与风控核心"
+title: "OMS 乱序状态机与 Uncertain 风险锁"
+subtitle: "当“成交”比“确认”先到、超时紧随其后，如何让编译器逼你穷尽每一种状态转移？"
+readMinutes: 15
+rustConcepts:
+  - "带数据 enum"
+  - "match 穷尽检查"
+  - "所有权 Move 防误用"
+  - "单调终态不变量"
+engineeringGoal: "用带数据枚举吸收乱序回报、禁止终态回退并锁定超时未知单"
+quantLessonSlug: "11-oms-state-machine"
+quantLessonTitle: "11：点了下单转圈圈，千万别连点两次！"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+订单管理系统（OMS）面对的不是教科书里规规矩矩的线性流程，而是充满乱序、重传和超时的真实网络：
+
+1. **成交回报比挂单确认（Ack）先到**：许多交易所的撮合通道和网关通道分离，你的订单刚发出还在 `PendingNew`，还没收到 `Ack`，就已经收到了一笔 `Fill`。如果状态机死板地拒绝“未确认订单的成交”，账本就会漏单！
+2. **迟到的撤单拒绝把终态改回活跃态**：订单已经全部成交进入 `Filled` 终态，20 毫秒后才飘来一条早先发出的 `Ack` 或 `CancelReject`。如果直接覆盖状态字段，死单复活，策略或风控会对着已经结束的订单继续撤单或重复扣额度。
+3. **下单超时后直接当成“失败”重发**：发出订单后 3 秒没回音，并不代表交易所没收到——可能只是回包丢了。此时贸然判为失败并重下第二单，一旦两笔都成交就是灾难性双倍持仓。正确做法是转入 **`Uncertain`（未知风险锁）**，在人工或对账查询确认前，风控必须按最坏情况计入敞口。
+
+---
+
+## 2. 核心 Rust 设计与在线语法点读
+
+Rust 的带数据枚举（Algebraic Data Types）加上编译器强制的 `match` 穷尽检查，加上按值转移所有权（Move），天生就是写 OMS 状态机的神器。
+
+<AnnotatedCode
+  client:visible
+  title="吸收乱序、锁死终态与 Uncertain 超时转移"
+  filePath="OMS 状态机核心"
+  code={`#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrderState {
+    PendingNew { orig_qty: u64 },
+    Live { orig_qty: u64, filled_qty: u64 },
+    Uncertain { orig_qty: u64, filled_qty: u64 },
+    Filled { orig_qty: u64 },
+    Canceled { filled_qty: u64 },
+}
+
+pub enum OrderEvent {
+    Ack,
+    Fill { qty: u64 },
+    Timeout,
+    Canceled,
+}
+
+impl OrderState {
+    pub fn apply(self, event: OrderEvent) -> Self {
+        match (self, event) {
+            // 终态单调不回退：忽略任何迟到事件
+            (s @ OrderState::Filled { .. }, _) | (s @ OrderState::Canceled { .. }, _) => s,
+
+            // 正常 Ack：待确认 -> 活跃
+            (OrderState::PendingNew { orig_qty }, OrderEvent::Ack) => {
+                OrderState::Live { orig_qty, filled_qty: 0 }
+            }
+            // 乱序吸收：成交比 Ack 先到，直接推进进度
+            (OrderState::PendingNew { orig_qty }, OrderEvent::Fill { qty }) => {
+                if qty >= orig_qty {
+                    OrderState::Filled { orig_qty }
+                } else {
+                    OrderState::Live { orig_qty, filled_qty: qty }
+                }
+            }
+            // 超时锁死为 Uncertain，绝不当成 Canceled
+            (OrderState::PendingNew { orig_qty }, OrderEvent::Timeout) => {
+                OrderState::Uncertain { orig_qty, filled_qty: 0 }
+            }
+            (OrderState::Live { orig_qty, filled_qty }, OrderEvent::Fill { qty })
+            | (OrderState::Uncertain { orig_qty, filled_qty }, OrderEvent::Fill { qty }) => {
+                let total = filled_qty.saturating_add(qty);
+                if total >= orig_qty {
+                    OrderState::Filled { orig_qty }
+                } else {
+                    OrderState::Live { orig_qty, filled_qty: total }
+                }
+            }
+            (OrderState::Live { orig_qty, filled_qty }, OrderEvent::Timeout) => {
+                OrderState::Uncertain { orig_qty, filled_qty }
+            }
+            (OrderState::Live { filled_qty, .. }, OrderEvent::Canceled)
+            | (OrderState::Uncertain { filled_qty, .. }, OrderEvent::Canceled) => {
+                OrderState::Canceled { filled_qty }
+            }
+            // 重复 Ack 或无影响事件：保持原状态
+            (state, OrderEvent::Ack | OrderEvent::Timeout | OrderEvent::Canceled) => state,
+        }
+    }
+}`}
+  annotations={[
+    {
+      id: 'r06-data-enum',
+      match: 'Uncertain { orig_qty: u64, filled_qty: u64 }',
+      label: '带数据 enum',
+      plain: '每个订单状态只携带当前阶段真正有意义的字段。例如 PendingNew 还没有成交量，Filled 的成交量必然等于 orig_qty。',
+      guard: '消除“状态是 Canceled 但剩余量还非零”的非法组合，把未知单（Uncertain）变成一等公民，逼迫下游风控必须显式处理。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r06-move-self',
+      match: 'pub fn apply(self, event: OrderEvent) -> Self',
+      label: '所有权 Move 防误用',
+      plain: '方法签名吃掉旧状态 self（按值转移所有权），再返回新状态 Self。调用完之后，旧状态变量在编译期直接失效。',
+      guard: '防止代码里不小心同时保留着一份旧状态副本和一份新状态，避免拿过期状态去做风控或重复触发转移。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r06-terminal-mono',
+      match: '(s @ OrderState::Filled { .. }, _) | (s @ OrderState::Canceled { .. }, _) => s,',
+      label: '单调终态不变量',
+      plain: '只要订单进入 Filled 或 Canceled，无论后面再收到什么迟到的 Ack 或 Timeout，都原样返回自身，绝不回退。',
+      guard: '彻底免疫网络乱序导致的“已成交订单被迟到回报复活成 Live 状态”的幽灵单故障。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r06-exhaustive-match',
+      match: 'match (self, event)',
+      label: 'match 穷尽检查',
+      plain: '把（当前状态, 输入事件）组成元组做模式匹配。今后只要新增一种状态（如 PendingCancel）或新事件，编译器会列出所有漏处理分支。',
+      guard: '把“忘了写某个状态分支”这种只有实盘极端乱序才踩中的隐蔽 Bug，提前变成编译报错。',
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+---
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="一笔 100 股的买单刚发出处于 `PendingNew`，3 秒未收到 Ack 触发 `Timeout` 进入了 `Uncertain`。200 毫秒后网络恢复，交易所推来一笔 40 股的 `Fill` 回报。按照上面的状态机，这笔订单会变成什么状态？"
+  options={[
+    { label: 'A', text: '被拒绝忽略，因为订单已经超时失败。' },
+    { label: 'B', text: '保持 Uncertain，但 filled_qty 不会更新。' },
+    { label: 'C', text: '自动解除未知态，推进为 Live { orig_qty: 100, filled_qty: 40 }。' },
+    { label: 'D', text: '直接跳到 Canceled { filled_qty: 40 }。' },
+  ]}
+  correctIndex={2}
+  explanation="收到交易所真实的 Fill 回报，就证明这笔订单确凿无疑已在交易所撮合引擎里存活且成交了 40 股！因此状态机精准吸收这份事实，将 Uncertain 推进为 Live { orig_qty: 100, filled_qty: 40 }，既不丢单也不永久锁死。"
+/>
+
+---
+
+## 4. 工程检查清单
+
+- **超时绝不等价于撤单或失败**：任何未收到终态回执的超时单必须标为 `Uncertain`，禁止策略自动重试补单。
+- **允许乱序推进，严禁终态回退**：`PendingNew` 可直接吸收 `Fill`；一旦进入 `Filled` 或 `Canceled`，对一切迟到事件免疫。
+- **用所有权消费旧状态**：`apply(self, event) -> Self` 配合穷尽 `match`，把状态机遗漏留在编译期。

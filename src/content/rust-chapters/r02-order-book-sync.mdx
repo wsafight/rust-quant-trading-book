@@ -1,0 +1,185 @@
+---
+chapterNumber: 2
+chapterCode: "R02"
+part: 1
+partName: "零误差数据底座"
+title: "L2 订单簿深度与增量同步作废"
+subtitle: "用 BTreeMap 维护买卖盘口，并在序列号断档或价差倒挂时立刻作废整本盘口"
+readMinutes: 14
+rustConcepts:
+  - "BTreeMap 有序集合"
+  - "Result 与 ? 传播"
+  - "自定义 Error 枚举"
+  - "&mut self 借用"
+engineeringGoal: "实现有序买卖盘查询、增量更新校验与 fail-closed 状态作废"
+quantLessonSlug: "01-order-book-impact"
+quantLessonTitle: "01：屏幕上写着 100 块，为什么买到手变成 100.42？"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+交易所推送 L2 盘口时，通常先给一份全量快照（Snapshot），再持续推送毫秒级增量变动（Delta）。新手维护本地盘口最容易犯三个致命错误：
+
+1. **用 `HashMap` 存价位，每次查买一卖一都要全表扫描排序**：行情剧烈波动时，延迟飙升，策略看到的永远是几毫秒前的旧盘口。
+2. **丢包后硬着头皮继续合并**：网络抖动丢掉第 `105` 号增量包，第 `106` 号包到达时如果只打一条警告日志就继续更新，盘口里会永远残留一笔“幽灵挂单”，策略以为能以 100.00 买到，实际发单瞬间滑点打穿到 100.80。
+3. **出现倒挂盘口（买一 ≥ 卖一）还不停机**：交叉盘口意味着本地状态已经严重腐化，此时如果还允许策略读取买一卖一，做市和套利策略会在几百毫秒内疯狂发单亏光本金。
+
+工业级订单簿的铁律是 **Fail-Closed（故障即封闭）**：一旦发现序列号断档或买一 ≥ 卖一，必须立刻把整本盘口标记为作废，强迫上游重新拉取全量快照。
+
+---
+
+## 2. 核心 Rust 设计与在线语法点读
+
+下面这段代码用 Rust 标准库的 `BTreeMap` 维护有序买卖盘，并把“序列号连续性检查”与“盘口交叉检查”做成不可绕过的状态流转。
+
+<AnnotatedCode
+  client:visible
+  title="有序 L2 订单簿与增量同步作废机制"
+  filePath="订单簿状态机"
+  code={`use std::collections::BTreeMap;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum BookError {
+    Invalidated,
+    SequenceGap { expected: u64, got: u64 },
+    CrossedBook { best_bid: i64, best_ask: i64 },
+}
+
+pub struct OrderBook {
+    bids: BTreeMap<i64, i64>,
+    asks: BTreeMap<i64, i64>,
+    last_seq: u64,
+    valid: bool,
+}
+
+impl OrderBook {
+    pub fn apply_delta(
+        &mut self,
+        seq: u64,
+        is_bid: bool,
+        price: i64,
+        qty: i64,
+    ) -> Result<(), BookError> {
+        if !self.valid {
+            return Err(BookError::Invalidated);
+        }
+        let expected = self.last_seq + 1;
+        if seq != expected {
+            self.valid = false;
+            return Err(BookError::SequenceGap { expected, got: seq });
+        }
+
+        let side = if is_bid { &mut self.bids } else { &mut self.asks };
+        if qty == 0 {
+            side.remove(&price);
+        } else {
+            side.insert(price, qty);
+        }
+        self.last_seq = seq;
+        self.verify_not_crossed()?;
+        Ok(())
+    }
+
+    fn verify_not_crossed(&mut self) -> Result<(), BookError> {
+        if let (Some((&best_bid, _)), Some((&best_ask, _))) =
+            (self.bids.last_key_value(), self.asks.first_key_value())
+        {
+            if best_bid >= best_ask {
+                self.valid = false;
+                return Err(BookError::CrossedBook { best_bid, best_ask });
+            }
+        }
+        Ok(())
+    }
+}`}
+  annotations={[
+    {
+      id: 'r02-btreemap',
+      match: 'BTreeMap<i64, i64>',
+      label: 'BTreeMap 有序集合',
+      plain: '按 Key（价格刻度）从小到大自动保持有序的平衡树映射。last_key_value() 直接拿到最大买价，first_key_value() 直接拿到最小卖价。',
+      guard: '买一（最高买价）和卖一（最低卖价）查询无需全表排序，且天然按价格优先级支持扫盘深度遍历。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r02-error-enum',
+      match: 'pub enum BookError',
+      label: '自定义 Error 枚举',
+      plain: '把每一种盘口异常都定义为带上下文数据的枚举分支，而不是模糊的字符串或布尔值 false。',
+      guard: '上游收到 SequenceGap 或 CrossedBook 时，可以精确区分是丢包还是脏数据，并触发快照重建与告警审计。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r02-mut-self',
+      match: '&mut self',
+      label: '&mut self 独占可变借用',
+      plain: '要求调用方必须持有对 OrderBook 的唯一可变引用，在修改盘口期间，编译期禁止任何其他读取方并发访问。',
+      guard: '杜绝“买盘改了一半、卖盘还没改，策略就读出撕裂盘口”的并发读写事故。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r02-try-operator',
+      match: 'self.verify_not_crossed()?;',
+      label: 'Result 与 ? 传播',
+      plain: '如果 verify_not_crossed() 返回 Err，? 运算符会立刻提前返回该错误给调用者；若返回 Ok 则继续往下执行。',
+      guard: '把错误传播变成零样板代码的显式控制流，避免忘记检查子函数返回值而让腐化盘口蒙混过关。',
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+在对外提供买一卖一查询时，也必须先检查 `self.valid`：一旦盘口已经作废，哪怕 `bids` 和 `asks` 里还留着旧数据，也绝不返回过时报价。
+
+<AnnotatedCode
+  client:visible
+  title="作废状态下的安全读取闸门"
+  filePath="Fail-Closed 读屏障"
+  code={`impl OrderBook {
+    pub fn top_of_book(&self) -> Result<(i64, i64), BookError> {
+        if !self.valid {
+            return Err(BookError::Invalidated);
+        }
+        let (&bid, _) = self.bids.last_key_value().ok_or(BookError::Invalidated)?;
+        let (&ask, _) = self.asks.first_key_value().ok_or(BookError::Invalidated)?;
+        Ok((bid, ask))
+    }
+}`}
+  annotations={[
+    {
+      id: 'r02-ok-or',
+      match: '.ok_or(BookError::Invalidated)?',
+      label: 'Option 转 Result',
+      plain: 'last_key_value() 返回 Option，如果盘口为空（None），ok_or 会把它转换成 Err(BookError::Invalidated) 并立刻返回。',
+      guard: '单边空盘口（流动性瞬间抽干）时不会 unwrap 崩溃，也不会返回 0 价误导策略。',
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+---
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="在上面的 `apply_delta` 中，当收到 `seq = 106`（期望 `105`）导致 `SequenceGap` 错误后，紧接着网络恢复又发来了 `seq = 107`。此时系统会怎么处理？"
+  options={[
+    { label: 'A', text: '继续应用 seq = 107，把 last_seq 更新为 107，自动跳过缺失的 105。' },
+    { label: 'B', text: '因为发生 SequenceGap 时已经把 self.valid 置为 false，后续增量会直接返回 Err(BookError::Invalidated)，直到重建快照。' },
+    { label: 'C', text: '程序会 panic 崩溃退出。' },
+    { label: 'D', text: '会把 107 缓存起来，但依然允许策略正常调用 top_of_book() 下单。' },
+  ]}
+  correctIndex={1}
+  explanation="这就是 Fail-Closed 作废机制的核心：一旦检测到序列号断档，self.valid 立刻翻转为 false。在收到交易所新一轮完整 Snapshot 重置盘口之前，任何增量更新和盘口读取都会被强硬拒绝，彻底阻断“拿脏盘口交易”的通道。"
+/>
+
+---
+
+## 4. 工程检查清单
+
+- **用 `BTreeMap` 替代无序哈希表维护价位档**：`last_key_value()` 取买一、`first_key_value()` 取卖一，兼顾有序性与深度扫描效率。
+- **数量归零必须彻底 `remove` 档位**：绝不能在盘口中保留 `qty == 0` 的空价位，否则买一/卖一会被空档位污染。
+- **断档与倒挂一律触发不可逆作废**：把 `valid = false` 作为硬闸门，只有完整快照（Snapshot）才能重新激活盘口。

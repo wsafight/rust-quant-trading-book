@@ -1,0 +1,172 @@
+---
+chapterNumber: 7
+chapterCode: "R07"
+part: 2
+partName: "撮合、执行与风控核心"
+title: "独立硬风控、最坏敞口与 Kill Switch"
+subtitle: "用纯函数和 Copy 只读快照算出 worst_long / worst_short，任何异常默认拒单"
+readMinutes: 13
+rustConcepts:
+  - "Copy 只读快照"
+  - "纯函数风控判定"
+  - "RiskDecision 枚举"
+  - "fail-closed 默认拒绝"
+engineeringGoal: "实现与策略解耦的前置风控闸门，覆盖在途单、未知单与过期行情"
+quantLessonSlug: "12-hard-risk-kill-switch"
+quantLessonTitle: "12：为什么专业团队都要装一个“红色急停按钮”？"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+很多团队把风控写成策略里的几行 `if pos > max_pos { return; }`，这种“软风控”在极端行情下形同虚设，主要有三大致命漏洞：
+
+1. **只看当前持仓，漏算在途买单与未知单（`Uncertain`）**：当前净持仓是 `0`，限额是 `100` 手。策略在 10 毫秒内连发 5 笔 80 手的买单，由于还没成交，每次查 `current_pos` 都是 `0`，于是 5 笔全部放行——1 秒后全部成交，净多头瞬间飙到 `400` 手直接爆仓。
+2. **行情已经断流卡死，风控却照常放单**：行情网关卡住了 5 秒，策略拿着过期的假价差疯狂扫单，风控如果只看金额不查行情新鲜度，就会眼睁睁看着账户在盲飞中失血。
+3. **风控和策略耦合，异常时默认放行（Fail-Open）**：为了“不影响交易机会”，有人在遇到行情缺失或算术异常时选择跳过检查放行。实盘里，**宁可漏赚十次，绝不多爆一次**，硬风控必须独立于策略，且严格执行 **Fail-Closed（任何异常默认拒单）**。
+
+---
+
+## 2. 核心 Rust 设计与在线语法点读
+
+下面这段前置硬风控闸门完全是**无副作用纯函数**：它只接收一份栈上可 `Copy` 的只读快照 `RiskSnapshot`，依次校验 Kill Switch、行情新鲜度、最坏多空敞口（`worst_long` / `worst_short`），并输出结构化的 `RiskDecision` 供审计。
+
+<AnnotatedCode
+  client:visible
+  title="独立前置硬风控与最坏多空敞口计算"
+  filePath="硬风控纯函数闸门"
+  code={`#[derive(Debug, Clone, Copy)]
+pub struct RiskSnapshot {
+    pub kill_switch_armed: bool,
+    pub now_ms: u64,
+    pub last_quote_ms: u64,
+    pub net_position: i64,
+    pub open_buy_qty: i64,      // 含 Working / PendingCancel / Uncertain
+    pub open_sell_qty: i64,     // 含 Working / PendingCancel / Uncertain
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RiskLimits {
+    pub max_abs_position: i64,
+    pub max_quote_age_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RiskDecision {
+    Allow,
+    Reject(RejectReason),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectReason {
+    KillSwitchActive,
+    StaleMarketData,
+    ExposureOverflow,
+    PositionLimitExceeded,
+}
+
+pub fn pre_trade_check(
+    snap: RiskSnapshot,
+    limits: RiskLimits,
+    order_signed_qty: i64,
+) -> RiskDecision {
+    if snap.kill_switch_armed {
+        return RiskDecision::Reject(RejectReason::KillSwitchActive);
+    }
+    if snap.now_ms < snap.last_quote_ms
+        || snap.now_ms - snap.last_quote_ms > limits.max_quote_age_ms
+    {
+        return RiskDecision::Reject(RejectReason::StaleMarketData);
+    }
+
+    let add_buy = order_signed_qty.max(0);
+    let add_sell = (-order_signed_qty).max(0);
+
+    let worst_long = match snap.net_position
+        .checked_add(snap.open_buy_qty)
+        .and_then(|v| v.checked_add(add_buy))
+    {
+        Some(v) => v,
+        None => return RiskDecision::Reject(RejectReason::ExposureOverflow),
+    };
+    let worst_short = match snap.net_position
+        .checked_sub(snap.open_sell_qty)
+        .and_then(|v| v.checked_sub(add_sell))
+    {
+        Some(v) => v,
+        None => return RiskDecision::Reject(RejectReason::ExposureOverflow),
+    };
+
+    if worst_long > limits.max_abs_position || worst_short < -limits.max_abs_position {
+        return RiskDecision::Reject(RejectReason::PositionLimitExceeded);
+    }
+    RiskDecision::Allow
+}`}
+  annotations={[
+    {
+      id: 'r07-copy-snapshot',
+      match: 'pub struct RiskSnapshot',
+      label: 'Copy 只读快照',
+      plain: '结构体全部由栈上标量组成并派生 Copy，传入风控函数时直接按值拷贝一份定格切片，风控内部无法修改任何外部状态。',
+      guard: '风控逻辑与策略、OMS 完全解耦，且快照在判定期间绝对静止，不会出现“检查到一半状态被改写”的竞态问题。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r07-pure-fn',
+      match: 'pub fn pre_trade_check(',
+      label: '纯函数风控判定',
+      plain: '不依赖全局单例、不查系统时间、不做网络 IO，同样的输入参数永远得出完全一致的 RiskDecision。',
+      guard: '极易做边界单元测试与离线全量回放复核，盘后能精确重现“当年为什么拦下或放行了这一单”。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r07-risk-decision',
+      match: 'pub enum RiskDecision',
+      label: 'RiskDecision 枚举',
+      plain: '用显式枚举替代冷冰冰的 bool，拒绝时必须附带精确的 RejectReason 原因码。',
+      guard: '监控面板和告警系统可以直接按 RejectReason 分类统计：是行情断流、触发急停还是敞口超限，一目了然。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r07-fail-closed',
+      match: 'None => return RiskDecision::Reject(RejectReason::ExposureOverflow),',
+      label: 'fail-closed 默认拒绝',
+      plain: '无论是时钟倒流（now_ms < last_quote_ms）、行情过期还是敞口算术溢出，全部一律返回 Reject，绝不放行。',
+      guard: '守住量化风控最高原则：系统只要看不清现状，就自动关闸保护本金。',
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+留意 `worst_long` 与 `worst_short` 的对称计算：
+- **最坏多头敞口**假设所有在途买单（含 `Uncertain`）和本次新买单**全部成交**，而所有在途卖单**一手都没成交**；
+- **最坏空头敞口**假设所有在途卖单（含 `Uncertain`）和本次新卖单**全部成交**，而所有在途买单**一手都没成交**。
+
+只要把这两条最坏边界同时锁死在 `[-max_abs_position, +max_abs_position]` 之内，无论交易所按什么顺序成交，账户都不可能突破持仓红线。
+
+---
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="假设账户最大绝对持仓限制 `max_abs_position = 100`。当前净持仓 `net_position = +80`，场上挂着 1 笔 40 手的在途卖单（`open_sell_qty = 40`），没有在途买单。现在策略想再发一笔 `+30` 手的买单。按照最坏敞口公式，硬风控会放行还是拒单？"
+  options={[
+    { label: 'A', text: '放行，因为 80 - 40 + 30 = 70，没有超过 100。' },
+    { label: 'B', text: '拒单（PositionLimitExceeded），因为 worst_long = 80 + 0 + 30 = 110 > 100，在途卖单不能抵扣多头最坏敞口。' },
+    { label: 'C', text: '放行，只要新买单小于在途卖单 40 手就安全。' },
+    { label: 'D', text: '拒单（ExposureOverflow）。' },
+  ]}
+  correctIndex={1}
+  explanation="在途卖单只是挂在盘口上，随时可能撤单或根本成交不了！如果拿未成交的卖单去抵扣新买单额度，一旦买单先成交而卖单没成交，净多头立刻冲到 +110 突破风控红线。因此计算 worst_long 时必须完全忽略 open_sell_qty。"
+/>
+
+---
+
+## 4. 工程检查清单
+
+- **硬风控独立成无副作用纯函数**：只吃只读 `RiskSnapshot`，绝不混写在策略业务代码里。
+- **最坏敞口必须计入全部在途与 `Uncertain` 单**：买方与卖方最坏敞口分开独立计算，绝不拿未成交的对向挂单互相抵扣。
+- **全维度 Fail-Closed**：Kill Switch 触发、行情过期、时间戳异常、算术溢出，任何一项异常均默认拒单并返回明确 `RejectReason`。

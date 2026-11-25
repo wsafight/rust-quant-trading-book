@@ -1,76 +1,119 @@
-# Rust 从入门到量化交易工程师
+# QuantLab · 双书量化交易交互式深度学习平台（Rust 实战版）
 
-[![Book](https://github.com/wsafight/rust-quant-trading-book/actions/workflows/book.yml/badge.svg)](https://github.com/wsafight/rust-quant-trading-book/actions/workflows/book.yml)
+一个采用**双书分离架构**的交互式量化交易学习平台与可运行 Rust 量化引擎参考仓库：
 
-在线阅读：[https://wsafight.github.io/rust-quant-trading-book/](https://wsafight.github.io/rust-quant-trading-book/)
+1. **《零基础量化交易主书》**（6 阶段 · **23 篇**零代码交互课程）：从 00A/00B/00C 交易所、账单与资产全景（红利/国债/基金/杠杆）入门一路走到 OFI 订单流 Alpha、配对/跨所套利、多策略风险平价与期权 Delta-Gamma 对冲；每篇配备专属浏览器交互沙盒与 38 个可点选白话术语词条。
+2. **《Rust 量化代码实战书》**（4 大篇 · **14 章**硬核工程实战）：面向程序员，逐行剖析 `code/` 目录下真实可编译测试的 Rust 量化交易核心引擎，涵盖强类型刻度、L2 订单簿同步、双式记账、撮合仿真、OMS 乱序状态机、独立硬风控、单写者确定性回放、Tokio 背压与策略算法库。
 
-这是独立书稿[《Rust 从入门到量化交易工程师》](book/src/README.md)的源码仓库。书稿从 Rust 基础讲到行情、OMS、做市、回测与生产可靠性，以“能构建、验证和解释一条量化交易链路”为目标。
+全站支持 **`⌘K / Ctrl+K` 双书与术语检索**、深浅色主题切换、专注阅读模式与本地学习进度追踪。
 
-首次阅读可从[序言](book/src/preface.md)和[全书阅读指南](book/src/reading-guide.md)开始。没有交易背景时，先读[零基础预备课](book/src/beginner-primer.md)；它用一笔订单解释订单簿、成交、OMS、账本、对账和回测。阅读指南按不同背景给出入口，并说明 28 章、5 个阶段检查点和配套工程如何组成一条连续学习路径。
+---
 
-## 适合谁
+## 一、零基础量化交易主书（6 阶段 · 23 篇）
 
-- 会其他语言、准备系统学习 Rust，并希望进入量化交易工程方向的开发者。
-- 已会 Rust，但缺少市场微观结构、衍生品、交易系统或回测经验的工程师。
-- 已做量化研究，希望补齐 OMS、风控、对账、低延迟和生产运维能力的研究员。
+| 阶段 | 篇目 | 交互沙盒 |
+| --- | --- | --- |
+| **Stage 0：零基础交易启蒙** | 00A. 交易所、行情与买卖基础 | 市场基础互动台 |
+| | 00B. 看懂交易账单的 5 个基本词 | 交易语言与账单模拟台 |
+| | 00C. 市面上都能买什么？红利、国债、基金与杠杆全景 | 资产全景与股债搭配模拟器 |
+| **Stage 1：市场微观结构与交易执行** | 01. 订单簿深度、价差与冲击成本 | L2 订单簿与盘口冲击沙盒 |
+| | 02. 做市商困境与逆向选择 | 做市商 Markout 实验室 |
+| | 03. 订单类型、撮合规则与父单拆单执行 | 父单拆单执行模拟器 |
+| | 04. 实时行情增量同步、时钟漂移与盘口作废 | 行情增量同步故障注入器 |
+| **Stage 2：交易品种、量化数学与资金账本** | 05. 永续合约、资金费率与保证金强平 | 永续合约 PnL 与强平滑块 |
+| | 06. 收益风险指标、最大回撤与仓位数学 | 策略净值与仓位 Sizing 模拟器 |
+| | 07. 双式记账、PnL 归因与幂等对账 | 成交账本与资金对账演练器 |
+| **Stage 3：策略研究、回测校准与统计检验** | 08. 事件驱动回测与成交假设 | 三模型同场回放对比器 |
+| | 09. 统计陷阱与多重检验 | 参数过拟合与样本外衰减模拟器 |
+| | 10. 从公允价到动态做市报价 | 做市报价引擎参数台 |
+| **Stage 4：实盘交易系统、风控与高可靠工程** | 11. OMS 乱序状态机与实盘容错 | OMS 乱序事件时间线沙盒 |
+| | 12. 独立硬风控、最坏敞口与 Kill Switch | 最坏敞口风控计算器 |
+| | 13. 交易所协议坑点与固定样本验证 | 交易所 JSON → 标准化事件映射器 |
+| | 14. 单写者事件循环与确定性回放 | 共享大锁撕裂快照 vs 单写者步进器 |
+| | 15. 实时行情管线、背压限流与 P99 延迟 | 有界队列背压与 P50/P99 模拟器 |
+| | 16. 全链路交易演练与极端故障恢复 | 端到端故障注入面板 |
+| **Stage 5：策略进阶：Alpha 信号、组合风控与期权** | 17. 微观结构 Alpha：OFI 订单流不平衡 | OFI 订单流不平衡与信号衰减台 |
+| | 18. 统计套利、配对交易与跨所单腿风险 | 配对价差 Z-Score 与单腿风险演练台 |
+| | 19. 多策略组合、相关性崩塌与风险平价 | 相关性崩塌与风险平价对比台 |
+| | 20. 期权定价、隐含波动率与 Delta-Gamma 对冲 | Black-Scholes 希腊字母与对冲台 |
 
-如果完全没有编程经验，先补齐变量、函数、数据结构、命令行和 Git 基础。本书解释 Rust 的核心概念，但不是通用计算机基础教材。
+---
 
-## 推荐路径
+## 二、Rust 量化代码实战书（4 篇 · 14 章）
 
-1. 阅读书稿的序言与第 1 章，完成环境检查和能力基线。
-2. 按顺序完成第 2 至 26 章，每章都运行代码、做练习并保留证据。
-3. 用第 27 章的贯穿项目连接行情、策略、风控、OMS、账本和回放。
-4. 使用第 28 章的能力地图复评，并按书内 24 周路线补缺口。
-5. 最后按第 27、28 章整理作品集、研究报告、事故复盘和面试材料。
+| 篇章 | 章节 | 锚定 Rust 模块 |
+| --- | --- | --- |
+| **第 1 篇：零误差数据底座** | R01. 强类型领域建模与零浮点刻度 | `code/src/domain.rs` |
+| | R02. L2 订单簿深度与增量同步作废 | `code/src/order_book.rs` |
+| | R03. 双式记账、均价反手与幂等对账 | `code/src/ledger.rs` |
+| **第 2 篇：撮合、执行与风控核心** | R04. 父单拆单执行与在途容量守恒 | `code/src/execution.rs` |
+| | R05. 确定性撮合模拟器与 L2 排队模型 | `code/src/simulator.rs` |
+| | R06. OMS 乱序状态机与 Uncertain 风险锁 | `code/src/oms.rs` |
+| | R07. 独立硬风控、最坏敞口与 Kill Switch | `code/src/risk.rs` |
+| **第 3 篇：协议、并发与高可靠系统** | R08. 交易所协议解码与离线固定样本回归 | `code/src/venue_fixture.rs` |
+| | R09. 单写者事件循环与全序确定性回放 | `code/src/replay.rs` |
+| | R10. Tokio 异步管线、有界背压与超时边界 | `code/tests/tokio_examples.rs` |
+| **第 4 篇：量化算法库与端到端边界** | R11. 多重检验统计与 BH-FDR 控制 | `code/src/research.rs` |
+| | R12. 微观结构 OFI 与配对单腿风控状态机 | `code/src/ofi.rs`, `code/src/pairs.rs` |
+| | R13. Const Generics 风险平价与 Black-Scholes 定价 | `code/src/portfolio.rs`, `code/src/options.rs` |
+| | R14. 端到端离线闭环与极端边界测试 | `code/src/bin/demo.rs`, `code/tests/` |
 
-默认投入为每周 15 至 20 小时、持续 24 周。每周只有 8 至 10 小时时，把周期延长到约 40 周，不要删掉测试、回测偏差和故障恢复部分。
+---
 
-## 本地阅读
+## 快速开始
 
-仓库使用 [mdBook](https://rust-lang.github.io/mdBook/) 组织书稿：
+### 1. 启动交互式学习站点（Astro 7 + React 19 + MDX + Tailwind CSS v4）
 
 ```bash
-cargo install mdbook --version 0.5.2 --locked
-mdbook serve --open
+pnpm install
+pnpm dev
 ```
 
-默认地址为 `http://localhost:3000`。只构建静态页面：
+打开浏览器访问 `http://localhost:4321` 即可体验全部 23 篇交易主书课程与 `/rust` 下的 14 篇 Rust 实战章节。
+
+类型检查、内容一致性校验与生产构建：
 
 ```bash
-mdbook build
+pnpm run check
+pnpm build
 ```
 
-运行书稿、配套工程、benchmark 编译、目录和本地链接的完整检查：
+### 2. 运行 Rust 伴随交易引擎与全量边界测试
 
 ```bash
-bash scripts/check-book.sh
+# 运行全部 53 项单元、边界、异步与离线闭环测试
+cargo test --manifest-path code/Cargo.toml --all-features
+
+# 运行端到端离线交易演练 Demo
+cargo run --manifest-path code/Cargo.toml --bin demo
+
+# 校验 Criterion 性能基准测试可编译
+cargo bench --manifest-path code/Cargo.toml --no-run
 ```
 
-离线配套工程位于 `book/code`，可直接运行订单簿、risk、模拟交易所、OMS、ledger 与 replay 的教学闭环：
+---
 
-```bash
-cargo run --locked --manifest-path book/code/Cargo.toml --bin demo
+## 目录结构
+
+```text
+.
+├── src/
+│   ├── components/
+│   │   ├── labs/           # 23 个专属量化交互实验室（React Islands）
+│   │   └── ui/             # 通用学习组件（AnnotatedCode / PredictQuiz / Term / CommandPalette / BrandIcon）
+│   ├── content/
+│   │   ├── lessons/        # 23 篇零基础量化交互课程（MDX）
+│   │   └── rust-chapters/  # 14 篇 Rust 量化代码实战章节（MDX）
+│   ├── data/               # 双书课程路线图与术语词典元数据
+│   ├── layouts/            # 站点与双书阅读布局
+│   ├── lib/                # 学习进度、阅读器交互控制与子路径 URL 工具
+│   └── pages/              # 首页、Rust 书首页、动态章节路由与 404 页
+├── scripts/
+│   └── verify-content.mjs  # 双书元数据、术语 ID、代码引用与相对路径一致性校验
+├── code/                   # 可编译、可测试的 Rust 量化交易核心引擎
+│   ├── src/                # domain / order_book / execution / ledger / simulator / research / oms / risk / venue_fixture / replay / ofi / pairs / portfolio / options
+│   ├── tests/              # trading_boundaries / offline_trading_loop / tokio_examples
+│   ├── examples/           # 7 个独立可运行示例程序
+│   └── benches/            # Criterion 性能基准
+└── .github/workflows/      # CI 校验（TS + 内容一致性 + Astro 构建 + Rust fmt/clippy/test/MSRV）与 GitHub Pages 部署
 ```
-
-该命令会固定演示 fill-before-ack、重复成交、sequence gap、cancel timeout、对账恢复和权益闭合。当前实现仍不包含原始行情 recorder/adapter、完整策略、event-log 持久化和研究报告生成，因此不应描述为生产级全链路系统。
-
-## Web 发布
-
-[Book workflow](.github/workflows/book.yml) 会在 pull request 中运行完整检查；推送到 `main` 或在 `main` 上手动运行 workflow 时，检查通过后会把 `book/html` 部署到 GitHub Pages。
-
-仓库首次发布前，在 GitHub 的 **Settings -> Pages -> Build and deployment** 中把 Source 设为 **GitHub Actions**。部署完成后的公开地址会显示在 workflow 的 `deploy` job 和仓库 Deployments 页面。
-
-## 完成标准
-
-“读完”不是完成。最终应至少具备以下证据：
-
-- 一套可测试的 Rust 领域类型、L2 订单簿、订单状态机和硬风控模块。
-- 一个可确定性回放的做市/对冲仿真，包含费用、延迟、保守成交模型和 PnL 对账。
-- 一份延迟剖析报告、一份策略研究报告和一次故障演练复盘。
-- 能解释 sequence gap、fill-before-ack、cancel/fill race、请求超时、重启对账和 kill switch。
-- 能明确区分离线回测、shadow、测试网和真实生产证据，不把仿真收益包装成实盘业绩。
-
-## 安全边界
-
-本仓库用于教育、研究和模拟，不构成投资建议。示例默认不连接真实账户。接入外部 API 时先使用公开行情、只读权限或测试网；任何真实资金实验都应使用独立子账户、最小权限、最小资金、硬性限额和独立人工 kill switch。

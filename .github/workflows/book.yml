@@ -1,4 +1,4 @@
-name: Book
+name: Interactive Book & Rust Engine
 
 on:
   push:
@@ -15,6 +15,28 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync Astro types, typecheck, and verify content integrity
+        run: pnpm run check
+
+      - name: Build interactive site for GitHub Pages
+        env:
+          SITE_BASE: /rust-quant-trading-book
+        run: pnpm build
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.98.0
         with:
@@ -23,21 +45,20 @@ jobs:
       - name: Cache Cargo build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: book/code
+          workspaces: code
 
-      - name: Install mdBook
-        uses: peaceiris/actions-mdbook@v2
-        with:
-          mdbook-version: '0.5.2'
-
-      - name: Check manuscript and companion project
-        run: bash scripts/check-book.sh
+      - name: Check Rust formatting, clippy, and tests
+        run: |
+          cargo fmt --manifest-path code/Cargo.toml --all -- --check
+          cargo clippy --locked --manifest-path code/Cargo.toml --all-targets --all-features -- -D warnings
+          cargo test --locked --manifest-path code/Cargo.toml --all-features
+          cargo bench --locked --manifest-path code/Cargo.toml --no-run
 
       - name: Upload GitHub Pages artifact
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: book/html
+          path: dist
 
   msrv:
     runs-on: ubuntu-latest
@@ -55,13 +76,13 @@ jobs:
       - name: Cache Cargo build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: book/code
+          workspaces: code
 
       - name: Check all companion project targets
-        run: cargo check --locked --manifest-path book/code/Cargo.toml --all-targets --all-features
+        run: cargo check --locked --manifest-path code/Cargo.toml --all-targets --all-features
 
       - name: Test companion project
-        run: cargo test --locked --manifest-path book/code/Cargo.toml --all-features
+        run: cargo test --locked --manifest-path code/Cargo.toml --all-features
 
   deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

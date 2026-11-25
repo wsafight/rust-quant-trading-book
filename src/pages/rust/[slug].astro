@@ -1,0 +1,32 @@
+---
+import { getCollection, render } from 'astro:content';
+import RustChapterLayout from '../../layouts/RustChapterLayout.astro';
+
+export async function getStaticPaths() {
+  const chapters = await getCollection('rustChapters');
+  return chapters.map((chapter) => ({
+    params: { slug: chapter.id },
+    props: { chapter },
+  }));
+}
+
+const { chapter } = Astro.props;
+const { Content } = await render(chapter);
+---
+
+<RustChapterLayout
+  slug={chapter.id}
+  chapterNumber={chapter.data.chapterNumber}
+  chapterCode={chapter.data.chapterCode}
+  part={chapter.data.part}
+  partName={chapter.data.partName}
+  title={chapter.data.title}
+  subtitle={chapter.data.subtitle}
+  readMinutes={chapter.data.readMinutes}
+  rustConcepts={chapter.data.rustConcepts}
+  engineeringGoal={chapter.data.engineeringGoal}
+  quantLessonSlug={chapter.data.quantLessonSlug}
+  quantLessonTitle={chapter.data.quantLessonTitle}
+>
+  <Content />
+</RustChapterLayout>

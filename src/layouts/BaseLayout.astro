@@ -1,0 +1,71 @@
+---
+import '../styles/global.css';
+import { withBase } from '../lib/url';
+import CommandPalette from '../components/ui/CommandPalette';
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = '零基础也能看懂的量化交易交互式学习平台，附带独立的 Rust 量化代码实战伴生书' } = Astro.props;
+const canonicalUrl = Astro.site ? new URL(Astro.url.pathname, Astro.site).toString() : undefined;
+const fullTitle = `${title} · QuantLab`;
+---
+
+<!doctype html>
+<html lang="zh-CN" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#0b1017" />
+    {canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="QuantLab" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    {canonicalUrl && <meta property="og:url" content={canonicalUrl} />}
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content={fullTitle} />
+    <meta name="twitter:description" content={description} />
+    <link rel="icon" type="image/svg+xml" href={withBase('/favicon.svg')} />
+    <title>{fullTitle}</title>
+    <script is:inline>
+      (() => {
+        let stored = null;
+        try {
+          stored = localStorage.getItem('quant-theme');
+        } catch {
+          // Ignore storage errors in restricted environments
+        }
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = stored || (prefersDark ? 'dark' : 'light');
+        const isDark = theme === 'dark';
+        document.documentElement.classList.toggle('dark', isDark);
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', isDark ? '#0b1017' : '#f8fafc');
+      })();
+    </script>
+  </head>
+  <body class="min-h-screen antialiased selection:bg-emerald-500/25 selection:text-emerald-900 dark:selection:text-emerald-200">
+    <slot />
+    <CommandPalette client:idle baseUrl={import.meta.env.BASE_URL} />
+    <script is:inline>
+      window.__openQuantPalette = (tab = 'search') => {
+        window.dispatchEvent(new CustomEvent('quant-open-palette', { detail: { tab } }));
+      };
+      window.__toggleQuantTheme = () => {
+        const isDark = document.documentElement.classList.toggle('dark');
+        try {
+          localStorage.setItem('quant-theme', isDark ? 'dark' : 'light');
+        } catch {
+          // Ignore storage errors in restricted environments
+        }
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', isDark ? '#0b1017' : '#f8fafc');
+        window.dispatchEvent(new CustomEvent('quant-theme-changed', { detail: isDark ? 'dark' : 'light' }));
+      };
+    </script>
+  </body>
+</html>

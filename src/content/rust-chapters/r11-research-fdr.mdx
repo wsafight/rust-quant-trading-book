@@ -1,0 +1,141 @@
+---
+chapterNumber: 11
+chapterCode: "R11"
+part: 4
+partName: "量化算法库与端到端边界"
+title: "多重检验 FDR 与数值稳定性边界"
+subtitle: "用 f64::total_cmp 解决浮点排序陷阱，实现 Benjamini-Hochberg 假发现率控制"
+readMinutes: 12
+rustConcepts:
+  - "f64::total_cmp"
+  - "is_finite 入口守卫"
+  - "闭区间边界校验"
+  - "Result 统计语义"
+engineeringGoal: "对 NaN / Infinity / 越界概率返回 Err，保证统计过滤函数绝不静默失真"
+quantLessonSlug: "09-multiple-testing-overfitting"
+quantLessonTitle: "09：挑了 100 套参数选出最赚的，是真规律还是碰运气？"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+做因子挖掘或参数扫描时，团队常常一口气回测 200 个策略变体，然后挑出 p 值小于 `0.05` 的几个上线。但就算所有策略全是纯随机噪音，测试 200 次也会凭运气冒出大约 10 个“显著”假阳性。因此研究管线必须引入**多重检验校正（如 Benjamini-Hochberg FDR）**来控制假发现率。
+
+但在用 Rust 写统计过滤函数时，如果不懂 IEEE-754 浮点的坑，很容易写出表面能跑、实则暗藏地雷的代码：
+
+1. **对 `f64` 排序直接 `.partial_cmp().unwrap()`**：Rust 故意不给 `f64` 实现 `Ord`，因为 `NaN` 和任何数比大小都没有意义。一旦上游回测因为某天零成交算出一个 `NaN` 的 p 值，`unwrap()` 就会让整条研究流水线直接崩溃；如果用 `unwrap_or(Ordering::Equal)` 糊弄过去，排序结果会静默错乱，把垃圾因子排进“显著名单”。
+2. **放行越界概率与无穷大**：上游算错传进来 `p = -0.01`、`p = 1.2` 或 `alpha = f64::INFINITY`，不校验直接代入 BH 阈值 `rank / m * alpha`，会得出荒谬的全员通过或全员拒绝。
+
+在量化算法库里，**数值稳定性边界必须做成显式的 `Result` 入口守卫**：先拦截所有非有限值与越界区间，再用 `f64::total_cmp` 保证排序全序且确定。
+
+## 2. 核心 Rust 设计与在线语法点读
+
+下面这段代码完整实现了带严格数值守卫的 **Benjamini-Hochberg (BH) FDR 过滤器**。点击高亮语法标签即可展开解析。
+
+<AnnotatedCode
+  client:visible
+  title="带严格数值边界的 Benjamini-Hochberg FDR 过滤"
+  filePath="多重检验 FDR 算法"
+  code={`#[derive(Debug, PartialEq, Eq)]
+pub enum FdrError {
+    EmptyInput,
+    InvalidAlpha,
+    InvalidPValue { index: usize },
+}
+
+pub fn benjamini_hochberg(p_values: &[f64], alpha: f64) -> Result<Vec<bool>, FdrError> {
+    if p_values.is_empty() {
+        return Err(FdrError::EmptyInput);
+    }
+    if !alpha.is_finite() || alpha <= 0.0 || alpha >= 1.0 {
+        return Err(FdrError::InvalidAlpha);
+    }
+
+    let mut indexed: Vec<(usize, f64)> = Vec::with_capacity(p_values.len());
+    for (idx, &p) in p_values.iter().enumerate() {
+        if !p.is_finite() || !(0.0..=1.0).contains(&p) {
+            return Err(FdrError::InvalidPValue { index: idx });
+        }
+        indexed.push((idx, p));
+    }
+
+    indexed.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+
+    let m = p_values.len() as f64;
+    let mut max_passing_rank: Option<usize> = None;
+    for (rank_zero, &(_, p)) in indexed.iter().enumerate() {
+        let rank = rank_zero + 1;
+        let threshold = (rank as f64 / m) * alpha;
+        if p <= threshold {
+            max_passing_rank = Some(rank);
+        }
+    }
+
+    let mut accepted = vec![false; p_values.len()];
+    if let Some(cutoff) = max_passing_rank {
+        for &(orig_idx, _) in indexed.iter().take(cutoff) {
+            accepted[orig_idx] = true;
+        }
+    }
+    Ok(accepted)
+}`}
+  annotations={[
+    {
+      id: "r11-is-finite-guard",
+      match: "!alpha.is_finite()",
+      label: "is_finite 入口守卫",
+      plain: "is_finite() 同时拦截 NaN、+Infinity 和 -Infinity，只有常规有限实数才返回 true。",
+      guard: "注意 NaN <= 0.0 和 NaN >= 1.0 在 IEEE-754 中都为 false！如果不先写 !is_finite()，NaN 会绕过普通大小比较直接溜进核心公式。",
+      firstAppearance: true,
+    },
+    {
+      id: "r11-inclusive-range",
+      match: "!(0.0..=1.0).contains(&p)",
+      label: "闭区间边界校验",
+      plain: "使用 RangeInclusive (0.0..=1.0) 检查 p 值是否合法落在 [0, 1] 闭区间内。",
+      guard: "防止上游方差为 0 或数值下溢产生负概率、大于 1 的异常值污染整批排序与阈值判定。",
+      firstAppearance: true,
+    },
+    {
+      id: "r11-total-cmp",
+      match: "a.1.total_cmp(&b.1)",
+      label: "f64::total_cmp",
+      plain: "Rust 标准库提供的 IEEE-754 全序比较方法，直接返回 Ordering（而非 Option<Ordering>），绝不 panic。",
+      guard: "配合 .then_with(|| a.0.cmp(&b.0)) 在 p 值相等时按原始下标决胜，彻底消除浮点排序的 panic 与非确定性。",
+      firstAppearance: true,
+    },
+    {
+      id: "r11-result-stats",
+      match: "Result<Vec<bool>, FdrError>",
+      label: "Result 统计语义",
+      plain: "把“输入不合法”和“没有因子通过检验”彻底分开：前者返回 Err，后者返回 Ok(vec![false; n])。",
+      guard: "避免用空数组或全 false 掩盖上游算出的 NaN 脏数据，逼迫调用方在研究管线里立刻排查异常因子。",
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+留意第 27–38 行的 BH 判定逻辑：我们必须找到**满足 `p_(k) <= (k / m) * alpha` 的最大排名 `k`**，然后把排名 `1..=k` 的所有假设全部标记为通过，而不能在第一次遇到 `p > threshold` 时就提前 `break`。
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="假如某位同事把入口校验简写成了 `if p < 0.0 || p > 1.0 { return Err(...); }`，漏掉了 `!p.is_finite()`。当上游不小心传入 `f64::NAN` 时，这行校验会发生什么？"
+  options={[
+    { label: "A", text: "NaN < 0.0 为 true，所以会被成功拦截并返回 Err" },
+    { label: "B", text: "NaN 与任何数比较（<、>、==）都返回 false，因此校验会被直接绕过！" },
+    { label: "C", text: "Rust 编译器会检测到 NaN 比较并拒绝编译" },
+    { label: "D", text: "程序会在比较运算符 < 处立刻 panic" }
+  ]}
+  correctIndex={1}
+  explanation="按照 IEEE-754 浮点标准，NaN 与任何数值做 <、<=、>、>=、== 比较结果一律是 false。因此 `if p < 0.0 || p > 1.0` 对 NaN 完全失效！必须使用 `!p.is_finite()` 或 `!(0.0..=1.0).contains(&p)` 这种否定合法区间的写法才能把 NaN 彻底拦在门外。"
+/>
+
+## 4. 工程检查清单
+
+- **永远用“否定合法集合”校验浮点**：写 `!x.is_finite() || !(0.0..=1.0).contains(&x)`，绝不依赖 `x < 0.0 || x > 1.0` 拦截 `NaN`。
+- **用 `f64::total_cmp` 取代 `.partial_cmp().unwrap()`**：再叠加原始索引 `then_with` 决胜，让浮点排序既零 panic 又 100% 确定。
+- **区分“全不显著”与“输入污染”**：空输入、非有限数、越界 `alpha` 必须返回明确的 `Err`，绝不静默输出全 `false` 掩盖事故。

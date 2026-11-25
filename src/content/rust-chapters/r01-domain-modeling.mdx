@@ -1,0 +1,170 @@
+---
+chapterNumber: 1
+chapterCode: "R01"
+part: 1
+partName: "零误差数据底座"
+title: "强类型领域建模与零浮点刻度"
+subtitle: "用 Newtype 与私有字段在编译期拦住“把价格当数量传进去”的致命事故"
+readMinutes: 12
+rustConcepts:
+  - "Newtype 包装"
+  - "私有字段不变式"
+  - "Option 防非法输入"
+  - "checked_mul"
+engineeringGoal: "构造 PriceTicks / QtyLots / MoneyTicks 整数领域类型，杜绝浮点舍入与单位混用"
+quantLessonSlug: "00b-trading-language-basics"
+quantLessonTitle: "00B：看懂交易账单的 5 个基本词"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+在绝大多数原型脚本或弱类型系统里，下单函数往往长这样：`submit_order(price: f64, qty: f64)`。只要系统跑上几周，两个经典事故迟早会找上门：
+
+1. **参数顺序传反，却毫无报错**：调用方一时手滑写成 `submit_order(qty, price)`，把“100 股”当成“100 元”，把“10.50 元”当成“10.5 股”。因为两者都是 `f64`，编译器和运行时都会放行，直到交易所瞬间扫穿盘口才发现酿成乌龙指。
+2. **浮点精度漂移导致对账永久平不了**：在二进制 IEEE-754 浮点下，`0.1_f64 + 0.2_f64 == 0.30000000000000004`。挂单价差半个 tick 被交易所拒单，或者几万笔成交累积下来账本差了几分钱，财务对账系统直接告警锁死。
+
+在量化核心引擎里，**金额、价格与数量绝对不能用 `f64`，也不能裸奔为 `i64`**。我们必须用整数最小变动刻度（Tick / Lot）表达所有数值，并借 Rust 的类型系统把“价格”和“数量”变成两种互不兼容的独立类型。
+
+---
+
+## 2. 核心 Rust 设计与在线语法点读
+
+下面这段核心领域模型定义了 `PriceTicks`、`QtyLots` 与 `MoneyTicks` 三个零开销包装类型，并演示了如何安全地计算一笔订单的名义成交额（Notional）。点击代码中的高亮语法即可原地查看大白话解释。
+
+<AnnotatedCode
+  client:visible
+  title="零浮点刻度与强类型名义金额计算"
+  filePath="领域建模范式"
+  code={`#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PriceTicks(i64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct QtyLots(i64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MoneyTicks(i128);
+
+impl PriceTicks {
+    pub fn new(raw: i64) -> Option<Self> {
+        (raw > 0).then_some(Self(raw))
+    }
+
+    pub fn raw(self) -> i64 {
+        self.0
+    }
+}
+
+impl QtyLots {
+    pub fn new(raw: i64) -> Option<Self> {
+        (raw > 0).then_some(Self(raw))
+    }
+}
+
+pub fn calc_notional(price: PriceTicks, qty: QtyLots) -> Option<MoneyTicks> {
+    let p = i128::from(price.raw());
+    let q = i128::from(qty.0);
+    p.checked_mul(q).map(MoneyTicks)
+}`}
+  annotations={[
+    {
+      id: 'r01-newtype',
+      match: 'pub struct PriceTicks(i64);',
+      label: 'Newtype 包装',
+      plain: '用单字段元组结构体把普通 i64 包成新类型。编译后内存布局和裸 i64 完全一样，没有任何运行时开销。',
+      guard: '编译器会严格区分 PriceTicks 和 QtyLots，哪怕你手滑把价格和数量传反，代码根本通不过编译，彻底消灭参数错位乌龙指。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r01-private-field',
+      match: '(raw > 0).then_some(Self(raw))',
+      label: '私有字段不变式',
+      plain: '注意结构体内部字段没有 pub 修饰，外部无法直接写 PriceTicks(-5)，只能调用 new() 构造函数并通过合法性检查。',
+      guard: '把“价格必须严格大于 0”这条业务规则锁死在构造入口。只要下游拿到一个 PriceTicks，就不用到处重复写 if price <= 0 的防御判断。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r01-option',
+      match: 'Option<Self>',
+      label: 'Option 防非法输入',
+      plain: 'Option 表示“要么有合法值 Some(x)，要么没有值 None”，Rust 没有 null，强迫调用方显式处理非法输入。',
+      guard: '当行情源发来 0 或负数脏价格时，系统不会静默把 0 当成市价单发出去，而是强制在入口层拦截并拒收。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r01-checked-mul',
+      match: 'p.checked_mul(q).map(MoneyTicks)',
+      label: 'checked_mul 溢出会报错',
+      plain: '普通乘法在 Release 编译下溢出后会静默回绕成负数；checked_mul 在溢出时返回 None，再用 map 包装成 MoneyTicks。',
+      guard: '先升维到 i128 再做受检乘法，哪怕遇到天价合约乘以巨量持仓也不会发生整数回绕，杜绝“买爆了反而算出负金额”的灾难。',
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+再看一个常见需求：策略和风控经常需要对比两笔数量，或者把两笔同方向成交相加。通过给 `QtyLots` 实现带溢出检查的 `checked_add`，同时**故意不给 `PriceTicks` 实现加法**（两个价格相加在业务上毫无意义，只有“价格加价差”才有意义），我们就能把金融量纲规则直接写进类型系统：
+
+<AnnotatedCode
+  client:visible
+  title="按金融量纲约束运算能力"
+  filePath="量纲安全运算"
+  code={`#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TickDelta(i64);
+
+impl PriceTicks {
+    pub fn apply_delta(self, delta: TickDelta) -> Option<Self> {
+        self.0.checked_add(delta.0).and_then(Self::new)
+    }
+}
+
+impl QtyLots {
+    pub fn checked_add(self, rhs: Self) -> Option<Self> {
+        self.0.checked_add(rhs.0).map(Self)
+    }
+}`}
+  annotations={[
+    {
+      id: 'r01-tick-delta',
+      match: 'pub struct TickDelta(i64);',
+      label: '价差独立类型',
+      plain: '价差（如让价 -2 个 tick 或追价 +3 个 tick）可以是正数也可以是负数，因此单独建模为 TickDelta。',
+      guard: '区分“绝对价格”和“相对跳数”，避免把 2 个 tick 的让价当成 2 分钱绝对价格报给交易所。',
+      firstAppearance: true,
+    },
+    {
+      id: 'r01-and-then',
+      match: '.and_then(Self::new)',
+      label: 'and_then 链式校验',
+      plain: '如果前一步 checked_add 返回 Some(val)，就继续把它交给 Self::new 做正数校验；任何一步失败都会短路返回 None。',
+      guard: '防止做市策略向下挂单扣减 tick 时，把价格一路扣成 0 或负数，守住价格严格为正的不变量。',
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+---
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="如果某位同事图省事，把定义改成了 `pub struct PriceTicks(pub i64);`（给内部字段加了 pub），并在下单路径里直接写 `PriceTicks(raw_price)`，这会破坏哪条工程防线？"
+  options={[
+    { label: 'A', text: '会导致 PriceTicks 和 QtyLots 又能互相混用，失去编译期类型隔离。' },
+    { label: 'B', text: '会破坏“价格必为正数”的构造不变式，外部可绕过 new() 直接造出 0 或负数价格。' },
+    { label: 'C', text: '会让内存占用从 8 字节翻倍到 16 字节，影响高频行情吞吐。' },
+    { label: 'D', text: '不会有任何影响，因为只要用 i64 而不是 f64 就已经绝对安全了。' },
+  ]}
+  correctIndex={1}
+  explanation="即使内部字段改成 pub，PriceTicks 和 QtyLots 仍然是两个不同类型、不会混用，内存布局也仍是 8 字节。真正被击穿的是“不变式边界”：一旦外部可以直接调用 PriceTicks(0) 或 PriceTicks(-100)，下游所有假设价格为正的定价、除法与风控逻辑都会暴露在脏数据风险之下。"
+/>
+
+---
+
+## 4. 工程检查清单
+
+- **全链路禁用浮点记账**：价格、数量、手续费、盈亏统一使用整数刻度（`i64` / `i128`），只在展示层或研究统计层按需换算为小数。
+- **所有领域 Newtype 保持字段私有**：通过 `new()` 返回 `Option` 或 `Result` 守住正数、非零等业务不变式，拒绝裸构造。
+- **乘加运算一律升维并显式判溢出**：价格乘数量先转 `i128` 再走 `checked_mul`，把静默整数回绕扼杀在源头。

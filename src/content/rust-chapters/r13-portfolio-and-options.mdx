@@ -1,0 +1,186 @@
+---
+chapterNumber: 13
+chapterCode: "R13"
+part: 4
+partName: "量化算法库与端到端边界"
+title: "风险平价组合权重与 Black-Scholes Greeks"
+subtitle: "用 Const Generics 编译期锁死资产维度，用 bool::then_some 拦截非正到期时间"
+readMinutes: 14
+rustConcepts:
+  - "Const Generics <const N>"
+  - "定长数组零堆分配"
+  - "bool::then_some"
+  - "具名 Greeks 结构体"
+engineeringGoal: "实现定长数组波动率倒数归一化权重与具名期权 Greeks 定价器"
+quantLessonSlug: "20-options-greeks-delta-gamma"
+quantLessonTitle: "20：期权入门：为什么卖期权像开保险公司？"
+---
+
+import AnnotatedCode from '../../components/ui/AnnotatedCode';
+import PredictQuiz from '../../components/ui/PredictQuiz';
+
+## 1. 工程痛点：普通写法为什么会在实盘翻车？
+
+组合优化与衍生品定价模块是策略资金分配的“大管家”，但常见写法经常因为维度错位和数学奇点把整个组合带偏：
+
+1. **切片维度不匹配与运行时越界**：用 `Vec<f64>` 传 4 个标的的波动率，却和 5 个标的的目标权重数组混用；或者传入一个空切片导致权重求和为 `0`，算出全 `NaN` 权重直接把账户仓位清空。
+2. **返回匿名元组 `(f64, f64, f64, f64)` 导致 Greeks 拿反**：Black-Scholes 算完返回 `(price, delta, gamma, vega)`，调用方一不留神解构成 `(price, gamma, delta, vega)`，拿 Gamma 当 Delta 去对冲，一秒钟就把中性组合对冲成巨额方向敞口。
+3. **到期时间 `t <= 0` 或波动率 `sigma <= 0` 触发除零**：临近交割日算出的剩余时间可能是 `0.0` 甚至因时钟误差出现 `-1e-6`，直接丢进 `sigma * t.sqrt()` 立刻炸出 `NaN` 或 `Infinity`。
+
+Rust 的 **`const N: usize` 常量泛型** 能把“输入 N 个资产、输出严格 N 个权重”焊死在编译期；而 **`bool::then_some` + 具名 `Greeks` 结构体** 则能把数学奇点与字段混淆一次清零。
+
+## 2. 核心 Rust 设计与在线语法点读
+
+先看**逆波动率风险平价（Inverse-Volatility Risk Parity）**权重计算器：全程定长数组 `[f64; N]`，零堆分配且编译期维度严格对齐。点击高亮语法标签即可展开解析。
+
+<AnnotatedCode
+  client:visible
+  title="Const Generics 风险平价权重：编译期锁死资产维度"
+  filePath="组合风险平价权重"
+  code={`pub fn inverse_vol_weights<const N: usize>(vols: [f64; N]) -> Option<[f64; N]> {
+    if N == 0 {
+        return None;
+    }
+
+    let mut inv = [0.0_f64; N];
+    let mut sum = 0.0_f64;
+
+    for i in 0..N {
+        let v = vols[i];
+        if !v.is_finite() || v <= 0.0 {
+            return None;
+        }
+        let w = 1.0 / v;
+        inv[i] = w;
+        sum += w;
+    }
+
+    (sum.is_finite() && sum > 0.0).then_some({
+        let mut weights = [0.0_f64; N];
+        for i in 0..N {
+            weights[i] = inv[i] / sum;
+        }
+        weights
+    })
+}`}
+  annotations={[
+    {
+      id: "r13-const-generics",
+      match: "<const N: usize>",
+      label: "Const Generics <const N>",
+      plain: "把数组长度 N 提升为编译期常量泛型参数：传入 [f64; 4]，编译器就保证返回值一定是 Option<[f64; 4]>。",
+      guard: "从编译期彻底消灭“4 个波动率配 5 个资产权重”的维度错配 Bug，无需在运行时到处写 assert_eq!(a.len(), b.len())。",
+      firstAppearance: true,
+    },
+    {
+      id: "r13-fixed-zero-alloc",
+      match: "let mut inv = [0.0_f64; N];",
+      label: "定长数组零堆分配",
+      plain: "长度 N 在编译期已知，中间数组 inv 和输出数组 weights 全部直接分配在栈上，零 Vec 堆申请。",
+      guard: "在高频再平衡或大规模蒙特卡洛回测中，省去数百万次堆内存分配与释放开销。",
+      firstAppearance: true,
+    },
+    {
+      id: "r13-vol-pos-guard",
+      match: "!v.is_finite() || v <= 0.0",
+      label: "非正波动率守卫",
+      plain: "只要有任意一个标的停牌（波动率为 0）、数据缺失（NaN）或符号错误（负波动率），立刻返回 None 拒算。",
+      guard: "防止 1.0 / 0.0 产出 Infinity 把全部资金孤注一掷塞给一只停牌股票。",
+      firstAppearance: false,
+    },
+  ]}
+/>
+
+再看 **Black-Scholes 期权 Greeks 定价器**：用 `bool::then_some` 构造前置合法性闸门，并返回字段名自解释的 `OptionGreeks` 结构体。
+
+<AnnotatedCode
+  client:visible
+  title="Black-Scholes 期权 Greeks：入口守卫与具名输出"
+  filePath="期权 Greeks 定价器"
+  code={`#[derive(Debug, Clone, Copy)]
+pub struct OptionGreeks {
+    pub delta: f64,
+    pub gamma: f64,
+    pub vega: f64,
+}
+
+fn std_norm_pdf(x: f64) -> f64 {
+    (-0.5 * x * x).exp() / (2.0 * std::f64::consts::PI).sqrt()
+}
+
+fn std_norm_cdf(x: f64) -> f64 {
+    // Abramowitz & Stegun 近似或误差函数实现，保证 [0, 1] 单调有界
+    0.5 * (1.0 + (x / std::f64::consts::SQRT_2).tanh())
+}
+
+pub fn call_greeks(spot: f64, strike: f64, rate: f64, vol: f64, time_yr: f64) -> Option<OptionGreeks> {
+    let valid = spot.is_finite()
+        && strike.is_finite()
+        && rate.is_finite()
+        && vol.is_finite()
+        && time_yr.is_finite()
+        && spot > 0.0
+        && strike > 0.0
+        && vol > 0.0
+        && time_yr > 0.0;
+
+    valid.then_some(())?;
+
+    let sqrt_t = time_yr.sqrt();
+    let d1 = ((spot / strike).ln() + (rate + 0.5 * vol * vol) * time_yr) / (vol * sqrt_t);
+    let pdf = std_norm_pdf(d1);
+
+    Some(OptionGreeks {
+        delta: std_norm_cdf(d1),
+        gamma: pdf / (spot * vol * sqrt_t),
+        vega: spot * pdf * sqrt_t,
+    })
+}`}
+  annotations={[
+    {
+      id: "r13-named-greeks",
+      match: "pub struct OptionGreeks",
+      label: "具名 Greeks 结构体",
+      plain: "用带明确字段名（delta / gamma / vega）的 Copy 结构体替代匿名元组 (f64, f64, f64)。",
+      guard: "彻底杜绝调用方按位置解构时把 Gamma 当成 Delta 去对冲的致命操作失误。",
+      firstAppearance: true,
+    },
+    {
+      id: "r13-bool-then-some",
+      match: "valid.then_some(())?;",
+      label: "bool::then_some 提前返回",
+      plain: "当布尔条件 valid 为 true 时返回 Some(()) 继续向下算；为 false 时返回 None，配合 ? 立刻中止函数并返回 None。",
+      guard: "一行表达式把 spot、strike、vol、time_yr 的有限性与严格正数约束全部收口，绝不让 time_yr <= 0 进入 sqrt() 和除法。",
+      firstAppearance: true,
+    },
+    {
+      id: "r13-sqrt-t-safe",
+      match: "let sqrt_t = time_yr.sqrt();",
+      label: "安全开方与分母非零",
+      plain: "由于前置守卫已经证明 spot > 0、vol > 0、time_yr > 0，此处的 sqrt()、ln() 和分母 (spot * vol * sqrt_t) 在数学上全部安全有界。",
+      guard: "把边界检查与核心公式解耦，既保证数值零奇点，又让金融公式本身保持干净可读。",
+      firstAppearance: true,
+    },
+  ]}
+/>
+
+## 3. 找 Bug / 架构设计小测验
+
+<PredictQuiz
+  client:visible
+  question="如果把 inverse_vol_weights 的第 19 行写成 `(sum > 0.0).then_some(compute_weights())`，而不写成惰性闭包 `.then(|| ...)`，当 sum == 0.0 时会发生什么？"
+  options={[
+    { label: "A", text: "then_some 会跳过参数求值，所以非常安全" },
+    { label: "B", text: "then_some 的参数是急切求值（eager）的，即便条件为 false，括号里的计算和除法依然会先执行！" },
+    { label: "C", text: "Rust 编译器会自动把 then_some 优化成惰性求值" },
+    { label: "D", text: "只影响性能，不会产生任何除零或 NaN 风险" }
+  ]}
+  correctIndex={1}
+  explanation="这是一个经典的 Rust 细节：`bool::then_some(value)` 是急切求值，传入的表达式在判断布尔值之前就会先算完！如果表达式里有除零或昂贵计算，必须用惰性求值的 `bool::then(|| ...)`，或者像第二段代码那样用 `valid.then_some(())?;` 先完成早退守卫，再执行后续计算。"
+/>
+
+## 4. 工程检查清单
+
+- **固定资产篮子优先用 `<const N: usize>`**：让编译器静态核对输入与输出维度一致，同时获得栈上零堆分配性能。
+- **用 `valid.then_some(())?;` 或 `bool::then(|| ...)` 收口数学边界**：严防非正到期时间、零波动率或 `NaN` 进入 `ln`、`sqrt` 和分母。
+- **杜绝多值浮点匿名元组**：期权 Greeks、风险指标一律封装为具名结构体，靠字段名消除对冲接错线的低级事故。
