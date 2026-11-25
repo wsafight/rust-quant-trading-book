@@ -10,8 +10,8 @@ rustConcepts:
   - "enum 撮合模型"
   - "saturating_sub 队列消耗"
   - "单调时钟校验"
-  - "原子序号分配"
-engineeringGoal: "构建支持延迟建模、排队消耗与原子序号分配的离线撮合器"
+  - "checked_add 序号分配"
+engineeringGoal: "构建支持延迟建模、排队消耗与溢出保护的离线撮合器"
 quantLessonSlug: "08-event-driven-backtest-models"
 quantLessonTitle: "08：为什么“历史回测年化 200%”，一买真钱就亏？"
 ---
@@ -33,15 +33,15 @@ import PredictQuiz from '../../components/ui/PredictQuiz';
 
 ## 2. 核心 Rust 设计与在线语法点读
 
-下面这段核心代码用枚举把三种撮合假设收敛到同一套判定函数里，同时引入了单调时钟守卫、饱和队列扣减以及原子递增成交序号。
+下面是可独立阅读的简化教学示例，只处理单张买单与主动卖出成交，省略卖单、延迟和多订单调度。`Touch` 看卖一报价是否触及限价，不受逐笔成交量约束；`TradeThrough` 与 `L2Queue` 则使用成交价和成交量。序号使用单写者持有的普通整数，以 `checked_add` 拒绝溢出，不需要原子计数器。
+
+完整多订单模型还必须按价格、到达时间和接收序号分配同一笔成交量；同价订单共享外部队列的消耗，不能把同一笔市场成交重复分给每张订单。下方示例不能对多张订单直接循环调用来代替这一调度层。
 
 <AnnotatedCode
   client:visible
   title="多假设确定性撮合引擎与 L2 排队消耗"
   filePath="确定性撮合器"
-  code={`use std::sync::atomic::{AtomicU64, Ordering};
-
-#[derive(Debug, Clone, Copy)]
+  code={`#[derive(Debug, Clone, Copy)]
 pub enum FillModel {
     Touch,
     TradeThrough,
@@ -56,13 +56,14 @@ pub struct RestingBuyOrder {
 
 pub struct SimMatcher {
     last_ts_ns: u64,
-    next_fill_id: AtomicU64,
+    next_fill_id: u64,
 }
 
 impl SimMatcher {
     pub fn on_market_trade(
         &mut self,
         ts_ns: u64,
+        best_ask: i64,
         trade_price: i64,
         trade_qty: u64,
         order: &mut RestingBuyOrder,
@@ -70,11 +71,11 @@ impl SimMatcher {
         if ts_ns < self.last_ts_ns {
             return Err("non-monotonic clock detected");
         }
-        self.last_ts_ns = ts_ns;
+        let mut next_model = order.model;
 
-        let filled_qty = match &mut order.model {
-            FillModel::Touch if trade_price <= order.limit_price => {
-                order.remaining_qty.min(trade_qty)
+        let filled_qty = match &mut next_model {
+            FillModel::Touch if best_ask <= order.limit_price => {
+                order.remaining_qty
             }
             FillModel::TradeThrough if trade_price < order.limit_price => {
                 order.remaining_qty.min(trade_qty)
@@ -92,10 +93,16 @@ impl SimMatcher {
         };
 
         if filled_qty == 0 {
+            order.model = next_model;
+            self.last_ts_ns = ts_ns;
             return Ok(None);
         }
+        let fill_id = self.next_fill_id;
+        let next_fill_id = fill_id.checked_add(1).ok_or("fill id exhausted")?;
+        order.model = next_model;
         order.remaining_qty -= filled_qty;
-        let fill_id = self.next_fill_id.fetch_add(1, Ordering::Relaxed);
+        self.next_fill_id = next_fill_id;
+        self.last_ts_ns = ts_ns;
         Ok(Some((fill_id, filled_qty)))
     }
 }`}
@@ -126,10 +133,10 @@ impl SimMatcher {
     },
     {
       id: 'r05-atomic-seq',
-      match: 'self.next_fill_id.fetch_add(1, Ordering::Relaxed)',
-      label: '原子序号分配',
-      plain: '用无锁原子计数器顺序生成 0, 1, 2... 确定性成交编号，替代随机 UUID 或系统时间戳。',
-      guard: '保证回测输出完全可复现，每次回放的每笔成交 ID 严丝合缝，方便回归对比与账本幂等对账。',
+      match: 'fill_id.checked_add(1)',
+      label: 'checked_add 序号分配',
+      plain: '单写者按顺序分配成交编号，在修改订单、队列和时钟之前检查下一序号是否溢出。',
+      guard: '溢出时返回 Err，避免编号回绕与部分状态更新；确定性来自稳定的输入顺序，而不是原子操作。',
       firstAppearance: true,
     },
   ]}
@@ -158,4 +165,6 @@ impl SimMatcher {
 
 - **回测必须做多模型压力对比**：策略至少要通过 `L2Queue` 或 `TradeThrough` 验证，只在 `Touch` 下盈利的策略禁止上实盘。
 - **所有队列扣减使用 `saturating_sub`**：防止无符号整数下溢崩溃或回绕。
+- **逐笔成交量只分配一次**：多订单按价格与到达顺序共享剩余量，并单独处理同价外部排队量。
+- **先校验、后提交**：成交序号溢出时，订单余量、队列、时钟和回报必须全部保持原状。
 - **拒绝外部系统时钟与随机数**：撮合器只认事件自带的单调时间戳，用确定性自增 ID 保证 100% 可复现。

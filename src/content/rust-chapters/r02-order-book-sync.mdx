@@ -33,7 +33,7 @@ import PredictQuiz from '../../components/ui/PredictQuiz';
 
 ## 2. 核心 Rust 设计与在线语法点读
 
-下面这段代码用 Rust 标准库的 `BTreeMap` 维护有序买卖盘，并把“序列号连续性检查”与“盘口交叉检查”做成不可绕过的状态流转。
+下面是自包含的单序号增量教学示例，用 Rust 标准库的 `BTreeMap` 维护有序买卖盘。它假定快照已加载、价格和数量已完成领域校验；批量序号区间不在这段简化示例中。完整规则是：区间无效则作废；`last_sequence` 不超过已处理序号的旧包直接忽略；新包必须覆盖下一个期望序号，否则作废并重新同步。
 
 <AnnotatedCode
   client:visible
@@ -66,7 +66,13 @@ impl OrderBook {
         if !self.valid {
             return Err(BookError::Invalidated);
         }
-        let expected = self.last_seq + 1;
+        if seq <= self.last_seq {
+            return Ok(());
+        }
+        let Some(expected) = self.last_seq.checked_add(1) else {
+            self.valid = false;
+            return Err(BookError::Invalidated);
+        };
         if seq != expected {
             self.valid = false;
             return Err(BookError::SequenceGap { expected, got: seq });

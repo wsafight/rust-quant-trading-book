@@ -33,6 +33,8 @@ import PredictQuiz from '../../components/ui/PredictQuiz';
 
 Rust 的带数据枚举（Algebraic Data Types）加上编译器强制的 `match` 穷尽检查，加上按值转移所有权（Move），天生就是写 OMS 状态机的神器。
 
+下方是独立讲解枚举与所有权的简化示例，不是完整 OMS：它省略成交键、撤单在途和错误返回，也不处理撤单后的迟到成交。完整状态机只忽略相同成交键且数量相同的重传；同键不同数量必须报告冲突，不能当作合法重传。撤单后的新成交仍须补记数量，超额成交必须报错，不能用饱和加法掩盖。
+
 <AnnotatedCode
   client:visible
   title="吸收乱序、锁死终态与 Uncertain 超时转移"
