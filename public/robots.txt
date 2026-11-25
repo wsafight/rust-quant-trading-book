@@ -1,2 +1,4 @@
 User-agent: *
 Allow: /
+
+Sitemap: https://wsafight.github.io/rust-quant-trading-book/sitemap.xml

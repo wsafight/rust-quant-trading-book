@@ -10,6 +10,7 @@ interface Props {
 
 const { title, description = '零基础也能看懂的量化交易交互式学习平台，附带独立的 Rust 量化代码实战伴生书' } = Astro.props;
 const canonicalUrl = Astro.site ? new URL(Astro.url.pathname, Astro.site).toString() : undefined;
+const ogImageUrl = Astro.site ? new URL(withBase('/og-card.svg'), Astro.site).toString() : undefined;
 const fullTitle = `${title} · QuantLab`;
 ---
 
@@ -26,9 +27,12 @@ const fullTitle = `${title} · QuantLab`;
     <meta property="og:title" content={fullTitle} />
     <meta property="og:description" content={description} />
     {canonicalUrl && <meta property="og:url" content={canonicalUrl} />}
-    <meta name="twitter:card" content="summary" />
+    {ogImageUrl && <meta property="og:image" content={ogImageUrl} />}
+    {ogImageUrl && <meta property="og:image:alt" content={fullTitle} />}
+    <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={fullTitle} />
     <meta name="twitter:description" content={description} />
+    {ogImageUrl && <meta name="twitter:image" content={ogImageUrl} />}
     <link rel="icon" type="image/svg+xml" href={withBase('/favicon.svg')} />
     <title>{fullTitle}</title>
     <script is:inline>
