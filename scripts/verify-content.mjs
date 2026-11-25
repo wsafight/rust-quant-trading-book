@@ -1,5 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import ts from 'typescript';
+import { parse } from 'yaml';
 
 const errors = [];
 
@@ -24,13 +27,24 @@ const rustFiles = fs
   .map((f) => f.replace(/\.mdx$/, ''))
   .sort();
 
-const curSrc = fs.readFileSync('src/data/curriculum.ts', 'utf8');
-const rustCurSrc = fs.readFileSync('src/data/rustCurriculum.ts', 'utf8');
-const glossarySrc = fs.readFileSync('src/data/glossary.ts', 'utf8');
+async function loadData(file) {
+  const source = fs.readFileSync(file, 'utf8');
+  const { outputText } = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  });
+  return import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+}
+
+const { CURRICULUM } = await loadData('src/data/curriculum.ts');
+const { RUST_CURRICULUM } = await loadData('src/data/rustCurriculum.ts');
+const { GLOSSARY } = await loadData('src/data/glossary.ts');
 
 // 1. Verify slug sets match between curriculum files and MDX directories
-const curSlugs = [...curSrc.matchAll(/\bslug:\s*['"]([^'"]+)['"]/g)].map((m) => m[1]).sort();
-const rustCurSlugs = [...rustCurSrc.matchAll(/\bslug:\s*['"]([^'"]+)['"]/g)].map((m) => m[1]).sort();
+const curSlugs = CURRICULUM.map((entry) => entry.slug).sort();
+const rustCurSlugs = RUST_CURRICULUM.map((entry) => entry.slug).sort();
+for (const [name, slugs] of [['curriculum', curSlugs], ['rustCurriculum', rustCurSlugs]]) {
+  if (new Set(slugs).size !== slugs.length) errors.push(`Duplicate slug in ${name}`);
+}
 
 for (const slug of lessonFiles) {
   if (!curSlugs.includes(slug)) errors.push(`Lesson MDX missing from curriculum.ts: ${slug}`);
@@ -46,14 +60,10 @@ for (const slug of rustCurSlugs) {
 }
 
 // 2. Verify cross-book links and metadata sync between curriculum data and MDX frontmatter
-function checkMetadataSync(sourceText, mdxDir, linkKey, targetSet) {
-  const blocks = [...sourceText.matchAll(/\{[^{}]*slug:\s*['"]([^'"]+)['"][^{}]*\}/g)];
-  for (const match of blocks) {
-    const slug = match[1];
-    const block = match[0];
-    const dataTitle = (block.match(/title:\s*['"]([^'"]+)['"]/) || [])[1];
-    const dataMin = (block.match(/readMinutes:\s*(\d+)/) || [])[1];
-    const dataLink = (block.match(new RegExp(`${linkKey}:\\s*['"]([^'"]+)['"]`)) || [])[1];
+function checkMetadataSync(entries, mdxDir, linkKey, targetSet) {
+  for (const entry of entries) {
+    const { slug } = entry;
+    const dataLink = entry[linkKey];
 
     if (dataLink && !targetSet.includes(dataLink)) {
       errors.push(`Invalid ${linkKey}="${dataLink}" referenced by ${slug}`);
@@ -61,28 +71,41 @@ function checkMetadataSync(sourceText, mdxDir, linkKey, targetSet) {
 
     const mdxPath = path.join(mdxDir, `${slug}.mdx`);
     if (!fs.existsSync(mdxPath)) continue;
-    const fm = fs.readFileSync(mdxPath, 'utf8').split('---')[1] || '';
-    const fmTitle = (fm.match(/^title:\s*["']?(.+?)["']?\s*$/m) || [])[1];
-    const fmMin = (fm.match(/^readMinutes:\s*(\d+)/m) || [])[1];
-    const fmLink = (fm.match(new RegExp(`^${linkKey}:\\s*["']?(.+?)["']?\\s*$`, 'm')) || [])[1];
-
-    if (dataTitle !== fmTitle) {
-      errors.push(`Title mismatch for ${slug}: data="${dataTitle}" vs mdx="${fmTitle}"`);
+    const frontmatter = fs.readFileSync(mdxPath, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+    if (!frontmatter) {
+      errors.push(`Missing frontmatter: ${mdxPath}`);
+      continue;
     }
-    if (dataMin !== fmMin) {
-      errors.push(`readMinutes mismatch for ${slug}: data=${dataMin} vs mdx=${fmMin}`);
+    let metadata;
+    try {
+      metadata = parse(frontmatter[1]);
+    } catch (error) {
+      errors.push(`Invalid YAML in ${mdxPath}: ${error.message}`);
+      continue;
     }
-    if ((dataLink || '') !== (fmLink || '')) {
-      errors.push(`${linkKey} mismatch for ${slug}: data="${dataLink || ''}" vs mdx="${fmLink || ''}"`);
+    for (const [key, value] of Object.entries(entry)) {
+      if (['slug', 'quantCore', 'status'].includes(key)) continue;
+      if (!isDeepStrictEqual(value, metadata?.[key])) {
+        errors.push(`${key} mismatch for ${slug}: data=${JSON.stringify(value)} vs mdx=${JSON.stringify(metadata?.[key])}`);
+      }
+    }
+    if ((dataLink || '') !== (metadata?.[linkKey] || '')) {
+      errors.push(`${linkKey} mismatch for ${slug}`);
     }
   }
 }
 
-checkMetadataSync(curSrc, 'src/content/lessons', 'rustChapterSlug', rustFiles);
-checkMetadataSync(rustCurSrc, 'src/content/rust-chapters', 'quantLessonSlug', lessonFiles);
+checkMetadataSync(CURRICULUM, 'src/content/lessons', 'rustChapterSlug', rustFiles);
+checkMetadataSync(RUST_CURRICULUM, 'src/content/rust-chapters', 'quantLessonSlug', lessonFiles);
 
 // 3. Verify every <Term id="..."> exists in glossary.ts
-const glossaryIds = new Set([...glossarySrc.matchAll(/\bid:\s*['"]([^'"]+)['"]/g)].map((m) => m[1]));
+const glossaryIds = new Set(GLOSSARY.map((entry) => entry.id));
+if (glossaryIds.size !== GLOSSARY.length) errors.push('Duplicate glossary term id');
+for (const entry of GLOSSARY) {
+  if (entry.lessonSlug && !curSlugs.includes(entry.lessonSlug)) {
+    errors.push(`Invalid lessonSlug="${entry.lessonSlug}" in glossary term ${entry.id}`);
+  }
+}
 for (const f of srcFiles.filter((p) => p.endsWith('.mdx'))) {
   const txt = fs.readFileSync(f, 'utf8');
   for (const m of txt.matchAll(/<Term\b[^>]*\bid=["']([^"']+)["']/g)) {

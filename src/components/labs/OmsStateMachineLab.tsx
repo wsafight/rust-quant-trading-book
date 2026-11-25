@@ -15,7 +15,7 @@ interface SimOrder {
   totalQty: number;
   filledQty: number;
   status: OrderStatus;
-  executions: string[];
+  executions: Record<string, number>;
 }
 
 type SimEvent =
@@ -40,7 +40,7 @@ const INITIAL_ORDER: SimOrder = {
   totalQty: 10,
   filledQty: 0,
   status: 'PendingNew',
-  executions: [],
+  executions: {},
 };
 
 function isTerminal(s: OrderStatus): boolean {
@@ -54,12 +54,15 @@ function reduceOrder(
 ): { ok: true; next: SimOrder; dedup?: boolean; note: string } | { ok: false; error: string } {
   const next: SimOrder = {
     ...order,
-    executions: [...order.executions],
+    executions: { ...order.executions },
   };
 
   switch (event.type) {
     case 'Fill': {
-      if (next.executions.includes(event.key)) {
+      if (Object.hasOwn(next.executions, event.key)) {
+        if (next.executions[event.key] !== event.qty) {
+          return { ok: false, error: `ReduceError::ConflictingExecution（同一成交键的数量从 ${next.executions[event.key]} 变成 ${event.qty}）` };
+        }
         return {
           ok: true,
           next,
@@ -78,7 +81,7 @@ function reduceOrder(
           error: `ReduceError::Overfill { total: ${next.totalQty}, attempted: ${attempted} }`,
         };
       }
-      next.executions.push(event.key);
+      next.executions[event.key] = event.qty;
       next.filledQty = attempted;
       if (attempted === next.totalQty) {
         next.status = 'Filled';
@@ -438,7 +441,7 @@ export default function OmsStateMachineLab() {
         <div className="p-3.5">
           <div className="text-slate-500 text-[11px]">去重集合 (executions)</div>
           <div className="mt-0.5 font-mono text-xs text-slate-700 dark:text-slate-300 truncate">
-            {order.executions.length > 0 ? order.executions.join(', ') : '∅ 空'}
+            {Object.entries(order.executions).map(([key, quantity]) => `${key}: ${quantity}`).join(', ') || '∅ 空'}
           </div>
         </div>
       </div>
@@ -471,12 +474,24 @@ export default function OmsStateMachineLab() {
             <button
               type="button"
               onClick={() => {
-                const dupKey = order.executions[order.executions.length - 1] ?? 'f-dup';
-                dispatch({ type: 'Fill', key: dupKey, qty: 4 }, `Fill(${dupKey}, +4) [重放]`);
+                const dupKey = Object.keys(order.executions).at(-1) ?? 'f-dup';
+                const quantity = order.executions[dupKey] ?? 4;
+                dispatch({ type: 'Fill', key: dupKey, qty: quantity }, `Fill(${dupKey}, +${quantity}) [重放]`);
               }}
               className="rounded-lg bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/30 px-3 py-1.5 text-violet-700 dark:text-violet-300 cursor-pointer"
             >
               + DupFill(重放)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const key = Object.keys(order.executions).at(-1);
+                if (key) dispatch({ type: 'Fill', key, qty: order.executions[key] + 1 }, `Fill(${key}) [数量冲突]`);
+              }}
+              disabled={Object.keys(order.executions).length === 0}
+              className="rounded-lg border border-rose-500/30 bg-rose-500/15 px-3 py-1.5 text-rose-700 dark:text-rose-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              + ConflictFill(冲突)
             </button>
             <button
               type="button"

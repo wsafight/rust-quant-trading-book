@@ -1,4 +1,5 @@
 import { loadProgress, PROGRESS_EVENT, type LearningProgress } from './progress';
+import { activateModal } from './modal';
 
 const FOCUS_STORAGE_KEY = 'quant-focus-mode';
 
@@ -78,14 +79,31 @@ export function initReaderLayout(config: ReaderLayoutConfig): void {
   const mobileDrawer = document.getElementById(config.ids.mobileDrawer);
   const mobileClose = document.getElementById(config.ids.mobileClose);
   const mobileBackdrop = document.getElementById(config.ids.mobileBackdrop);
-  const closeDrawer = () => mobileDrawer?.classList.add('hidden');
+  let releaseDrawer: (() => void) | undefined;
+  const closeDrawer = () => {
+    releaseDrawer?.();
+    releaseDrawer = undefined;
+    mobileDrawer?.classList.add('hidden');
+    mobileBtn?.setAttribute('aria-expanded', 'false');
+  };
+  mobileBtn?.setAttribute('aria-controls', config.ids.mobileDrawer);
+  mobileBtn?.setAttribute('aria-expanded', 'false');
   mobileBtn?.addEventListener('click', () => {
+    if (!mobileDrawer || releaseDrawer) return;
     mobileDrawer?.classList.remove('hidden');
+    mobileBtn.setAttribute('aria-expanded', 'true');
     const activeMobileItem = mobileDrawer?.querySelector<HTMLElement>('[aria-current="page"]');
     activeMobileItem?.scrollIntoView({ block: 'center', behavior: 'instant' });
+    releaseDrawer = activateModal(mobileDrawer, mobileClose);
+  });
+  window.matchMedia('(min-width: 1024px)').addEventListener('change', (event) => {
+    if (event.matches) closeDrawer();
   });
   mobileClose?.addEventListener('click', closeDrawer);
   mobileBackdrop?.addEventListener('click', closeDrawer);
+  document.addEventListener('quant-modal-open', (event) => {
+    if ((event as CustomEvent<HTMLElement>).detail !== mobileDrawer) closeDrawer();
+  });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && mobileDrawer && !mobileDrawer.classList.contains('hidden')) {
       closeDrawer();

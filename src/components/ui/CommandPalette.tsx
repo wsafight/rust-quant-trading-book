@@ -3,6 +3,8 @@ import { CURRICULUM } from '../../data/curriculum';
 import { GLOSSARY, type GlossaryEntry } from '../../data/glossary';
 import { RUST_CURRICULUM, RUST_PARTS } from '../../data/rustCurriculum';
 import { loadProgress, markTermExplored, PROGRESS_EVENT } from '../../lib/progress';
+import { isRustPath } from '../../lib/route';
+import { activateModal } from '../../lib/modal';
 
 interface Props {
   baseUrl?: string;
@@ -43,13 +45,14 @@ export default function CommandPalette({ baseUrl = '/' }: Props) {
   const [isRustContext, setIsRustContext] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
   const lessonUrl = (slug: string) => `${normalizedBase}lessons/${slug}`;
   const rustUrl = (slug: string) => `${normalizedBase}rust/${slug}`;
 
   useEffect(() => {
-    setIsRustContext(window.location.pathname.includes('/rust'));
+    setIsRustContext(isRustPath(window.location.pathname, baseUrl));
     const sync = () => {
       const p = loadProgress();
       setCompletedLessons(p.completedLessons);
@@ -75,20 +78,28 @@ export default function CommandPalette({ baseUrl = '/' }: Props) {
       setTab(custom.detail?.tab || 'search');
       setOpen(true);
     };
+    const onModalOpen = (event: Event) => {
+      if ((event as CustomEvent<HTMLElement>).detail !== dialogRef.current) setOpen(false);
+    };
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('quant-open-palette', onOpenEvent);
+    document.addEventListener('quant-modal-open', onModalOpen);
     return () => {
       window.removeEventListener(PROGRESS_EVENT, sync);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('quant-open-palette', onOpenEvent);
+      document.removeEventListener('quant-modal-open', onModalOpen);
     };
   }, []);
 
   useEffect(() => {
-    if (open && tab === 'search') {
-      setTimeout(() => inputRef.current?.focus(), 20);
-    }
+    if (!open || !dialogRef.current) return;
+    return activateModal(dialogRef.current, inputRef.current);
+  }, [open]);
+
+  useEffect(() => {
+    if (open && tab === 'search') inputRef.current?.focus();
   }, [open, tab]);
 
   const searchResults = useMemo<SearchResultItem[]>(() => {
@@ -184,6 +195,7 @@ export default function CommandPalette({ baseUrl = '/' }: Props) {
       onClick={() => setOpen(false)}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="全站检索与术语词典"
@@ -242,11 +254,12 @@ export default function CommandPalette({ baseUrl = '/' }: Props) {
               <input
                 ref={inputRef}
                 type="text"
+                aria-label="搜索课程、术语或 Rust 概念"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={handleInputKeyDown}
                 placeholder="输入任意关键词：bps、做空、滑点、爆仓、期权、凯利、或 Rust 语法（BTreeMap、enum）..."
-                className="w-full bg-transparent text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
+                className="w-full bg-transparent text-sm text-slate-900 dark:text-white placeholder:text-slate-400"
               />
             </div>
 

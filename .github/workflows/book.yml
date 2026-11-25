@@ -29,7 +29,7 @@ jobs:
       - name: Install web dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Sync Astro types, typecheck, and verify content integrity
+      - name: Check Astro and TypeScript, verify content, and run web regressions
         run: pnpm run check
 
       - name: Build interactive site for GitHub Pages
