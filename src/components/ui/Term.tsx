@@ -1,17 +1,26 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { GLOSSARY_BY_ID } from '../../data/glossary';
 import { markTermExplored } from '../../lib/progress';
 
 interface Props {
   id: string;
-  children?: React.ReactNode;
+  children?: ReactNode;
 }
+
+interface PopoverPos {
+  desktop: boolean;
+  top: number;
+  left: number;
+  openAbove: boolean;
+}
+
+const TERM_OPEN_EVENT = 'quant-term-open';
 
 export default function Term({ id, children }: Props) {
   const entry = GLOSSARY_BY_ID[id];
+  const instanceId = useId();
   const [open, setOpen] = useState(false);
-  const [align, setAlign] = useState<'center' | 'left' | 'right'>('center');
-  const [openAbove, setOpenAbove] = useState(false);
+  const [pos, setPos] = useState<PopoverPos>({ desktop: false, top: 0, left: 16, openAbove: false });
   const wrapperRef = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
@@ -21,15 +30,16 @@ export default function Term({ id, children }: Props) {
       const rect = wrapperRef.current.getBoundingClientRect();
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      const halfPopover = 170;
-      if (rect.left < halfPopover) {
-        setAlign('left');
-      } else if (vw - rect.right < halfPopover) {
-        setAlign('right');
-      } else {
-        setAlign('center');
-      }
-      setOpenAbove(vh - rect.bottom < 220 && rect.top > 220);
+      const desktop = vw >= 640;
+      const popoverWidth = 320;
+      const pad = 16;
+      const openAbove = vh - rect.bottom < 220 && rect.top > 220;
+      const left = Math.min(
+        Math.max(rect.left + rect.width / 2 - popoverWidth / 2, pad),
+        Math.max(pad, vw - popoverWidth - pad),
+      );
+      const top = openAbove ? rect.top - 8 : rect.bottom + 8;
+      setPos({ desktop, top, left, openAbove });
     };
     updatePosition();
     const onDocClick = (e: MouseEvent) => {
@@ -40,15 +50,26 @@ export default function Term({ id, children }: Props) {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
     };
+    const onOtherTermOpen = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== instanceId) setOpen(false);
+    };
+    const onModalOpen = () => setOpen(false);
+
     document.addEventListener('mousedown', onDocClick);
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener(TERM_OPEN_EVENT, onOtherTermOpen);
+    document.addEventListener('quant-modal-open', onModalOpen);
     window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, { passive: true, capture: true });
     return () => {
       document.removeEventListener('mousedown', onDocClick);
       document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener(TERM_OPEN_EVENT, onOtherTermOpen);
+      document.removeEventListener('quant-modal-open', onModalOpen);
       window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, { capture: true });
     };
-  }, [open]);
+  }, [open, instanceId]);
 
   if (!entry) {
     return <span>{children ?? id}</span>;
@@ -60,6 +81,7 @@ export default function Term({ id, children }: Props) {
     const next = !open;
     setOpen(next);
     if (next) {
+      document.dispatchEvent(new CustomEvent(TERM_OPEN_EVENT, { detail: instanceId }));
       markTermExplored(entry.id);
     }
   };
@@ -80,15 +102,16 @@ export default function Term({ id, children }: Props) {
         <span
           role="dialog"
           aria-label={entry.term}
-          className={`fixed inset-x-4 bottom-5 sm:inset-x-auto sm:bottom-auto sm:absolute z-50 sm:z-40 block sm:w-80 rounded-2xl border border-emerald-500/30 bg-white dark:bg-[#101826] p-3.5 text-left shadow-xl ring-1 ring-slate-950/5 dark:ring-white/10 ${
-            openAbove ? 'sm:bottom-full sm:mb-2' : 'sm:top-full sm:mt-2'
-          } ${
-            align === 'left'
-              ? 'sm:left-0'
-              : align === 'right'
-                ? 'sm:right-0'
-                : 'sm:left-1/2 sm:-translate-x-1/2'
-          }`}
+          style={
+            pos.desktop
+              ? {
+                  top: `${pos.top}px`,
+                  left: `${pos.left}px`,
+                  transform: pos.openAbove ? 'translateY(-100%)' : undefined,
+                }
+              : undefined
+          }
+          className="fixed inset-x-4 bottom-5 sm:inset-x-auto sm:bottom-auto z-50 block sm:w-80 rounded-2xl border border-emerald-500/30 bg-white dark:bg-[#101826] p-3.5 text-left shadow-xl ring-1 ring-slate-950/5 dark:ring-white/10"
         >
           <span className="flex items-center justify-between gap-2 mb-1.5">
             <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
