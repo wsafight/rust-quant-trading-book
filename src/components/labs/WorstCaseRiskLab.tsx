@@ -1,13 +1,14 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { markLabComplete } from '../../lib/progress';
+
+const ACTIVE_BUY = 3;
+const ACTIVE_SELL = 1;
+const UNCERTAIN_SELL = 0;
+const MAX_ABS_POS = 10;
 
 export default function WorstCaseRiskLab() {
   const [position, setPosition] = useState(4);
-  const [activeBuy, setActiveBuy] = useState(3);
   const [uncertainBuy, setUncertainBuy] = useState(2);
-  const [activeSell, setActiveSell] = useState(1);
-  const [uncertainSell, setUncertainSell] = useState(0);
-  const [maxAbsPos, setMaxAbsPos] = useState(10);
   const [newSide, setNewSide] = useState<'buy' | 'sell'>('buy');
   const [newQty, setNewQty] = useState(3);
   const [enabled, setEnabled] = useState(true);
@@ -15,8 +16,8 @@ export default function WorstCaseRiskLab() {
   const [touched, setTouched] = useState(false);
 
   const verdict = useMemo(() => {
-    const worstLong = position + activeBuy + uncertainBuy;
-    const worstShort = position - activeSell - uncertainSell;
+    const worstLong = position + ACTIVE_BUY + uncertainBuy;
+    const worstShort = position - ACTIVE_SELL - UNCERTAIN_SELL;
     const projected = newSide === 'buy' ? worstLong + newQty : worstShort - newQty;
 
     if (!enabled) {
@@ -25,34 +26,34 @@ export default function WorstCaseRiskLab() {
     if (!bookFresh) {
       return { status: 'REJECT', reason: 'RiskRejectReason::StaleMarketData (行情已过期)', worstLong, worstShort, projected };
     }
-    if (newSide === 'buy' && worstLong + newQty > maxAbsPos) {
-      const avail = Math.max(0, maxAbsPos - worstLong);
+    if (newSide === 'buy' && worstLong + newQty > MAX_ABS_POS) {
+      const avail = Math.max(0, MAX_ABS_POS - worstLong);
       return {
         status: avail > 0 ? 'RESIZE' : 'REJECT',
         reason:
           avail > 0
             ? `RiskDecision::Resize { max_qty_lots: ${avail} }（超仓自动缩量）`
-            : `RiskRejectReason::PositionLimit（worst_long=${worstLong} 已触顶 ${maxAbsPos}）`,
+            : `RiskRejectReason::PositionLimit（worst_long=${worstLong} 已触顶 ${MAX_ABS_POS}）`,
         worstLong,
         worstShort,
         projected,
       };
     }
-    if (newSide === 'sell' && worstShort - newQty < -maxAbsPos) {
-      const avail = Math.max(0, maxAbsPos + worstShort);
+    if (newSide === 'sell' && worstShort - newQty < -MAX_ABS_POS) {
+      const avail = Math.max(0, MAX_ABS_POS + worstShort);
       return {
         status: avail > 0 ? 'RESIZE' : 'REJECT',
         reason:
           avail > 0
             ? `RiskDecision::Resize { max_qty_lots: ${avail} }（超空自动缩量）`
-            : `RiskRejectReason::PositionLimit（worst_short=${worstShort} 已触底 -${maxAbsPos}）`,
+            : `RiskRejectReason::PositionLimit（worst_short=${worstShort} 已触底 -${MAX_ABS_POS}）`,
         worstLong,
         worstShort,
         projected,
       };
     }
     return { status: 'ALLOW', reason: 'RiskDecision::Allow（最坏敞口在硬限额内）', worstLong, worstShort, projected };
-  }, [position, activeBuy, uncertainBuy, activeSell, uncertainSell, maxAbsPos, newSide, newQty, enabled, bookFresh]);
+  }, [position, uncertainBuy, newSide, newQty, enabled, bookFresh]);
 
   useEffect(() => {
     if (touched) markLabComplete('lab-worst-case-risk');
@@ -97,13 +98,13 @@ export default function WorstCaseRiskLab() {
           <label className="block">
             <div className="flex justify-between text-xs mb-1">
               <span className="text-slate-500">在途买单 + Uncertain 买单</span>
-              <span className="font-mono font-bold text-amber-500">{activeBuy} + {uncertainBuy}</span>
+              <span className="font-mono font-bold text-amber-500">{ACTIVE_BUY} + {uncertainBuy}</span>
             </div>
             <input type="range" min={0} max={8} value={uncertainBuy} onChange={(e) => { setUncertainBuy(Number(e.target.value)); setTouched(true); }} className="w-full accent-amber-500" />
           </label>
           <label className="block">
             <div className="flex justify-between text-xs mb-1">
-              <span className="text-slate-500">新单方向与数量（上限 ±{maxAbsPos}）</span>
+              <span className="text-slate-500">新单方向与数量（上限 ±{MAX_ABS_POS}）</span>
               <span className="font-mono font-bold text-emerald-500">{newSide.toUpperCase()} {newQty}</span>
             </div>
             <div className="flex items-center gap-2">
@@ -118,11 +119,11 @@ export default function WorstCaseRiskLab() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono">
           <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 p-3">
             <div className="text-[11px] font-sans text-slate-500">worst_long = pos + actB + uncB</div>
-            <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{verdict.worstLong} / +{maxAbsPos}</div>
+            <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{verdict.worstLong} / +{MAX_ABS_POS}</div>
           </div>
           <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 p-3">
             <div className="text-[11px] font-sans text-slate-500">worst_short = pos - actS - uncS</div>
-            <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{verdict.worstShort} / -{maxAbsPos}</div>
+            <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{verdict.worstShort} / -{MAX_ABS_POS}</div>
           </div>
           <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 p-3">
             <div className="text-[11px] font-sans text-slate-500">新单叠加后最坏敞口</div>

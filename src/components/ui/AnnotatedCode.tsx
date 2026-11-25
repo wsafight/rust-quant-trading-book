@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { loadProgress, markRustConceptExplored, PROGRESS_EVENT } from '../../lib/progress';
 
 export interface CodeAnnotation {
@@ -22,12 +22,42 @@ interface AnnotatedCodeProps {
   annotations: CodeAnnotation[];
 }
 
-interface TokenSegment {
+export interface TokenSegment {
   text: string;
   annotation?: CodeAnnotation;
 }
 
-function tokenizeLine(line: string, annotations: CodeAnnotation[]): TokenSegment[] {
+const IDENT_CHAR = /[A-Za-z0-9_]/;
+
+function splitWithBoundaries(text: string, needle: string): Array<{ text: string; matched: boolean }> {
+  if (!needle) return [{ text, matched: false }];
+  const checkStart = IDENT_CHAR.test(needle[0]);
+  const checkEnd = IDENT_CHAR.test(needle[needle.length - 1]);
+  const out: Array<{ text: string; matched: boolean }> = [];
+  let cursor = 0;
+  let searchFrom = 0;
+
+  while (searchFrom <= text.length - needle.length) {
+    const idx = text.indexOf(needle, searchFrom);
+    if (idx === -1) break;
+    const beforeOk = !checkStart || idx === 0 || !IDENT_CHAR.test(text[idx - 1]);
+    const afterIdx = idx + needle.length;
+    const afterOk = !checkEnd || afterIdx === text.length || !IDENT_CHAR.test(text[afterIdx]);
+    if (beforeOk && afterOk) {
+      if (idx > cursor) out.push({ text: text.slice(cursor, idx), matched: false });
+      out.push({ text: needle, matched: true });
+      cursor = afterIdx;
+      searchFrom = afterIdx;
+    } else {
+      searchFrom = idx + 1;
+    }
+  }
+
+  if (cursor < text.length) out.push({ text: text.slice(cursor), matched: false });
+  return out.length > 0 ? out : [{ text, matched: false }];
+}
+
+export function tokenizeLine(line: string, annotations: CodeAnnotation[]): TokenSegment[] {
   let segments: TokenSegment[] = [{ text: line }];
   const sorted = [...annotations].sort((a, b) => b.match.length - a.match.length);
 
@@ -39,18 +69,8 @@ function tokenizeLine(line: string, annotations: CodeAnnotation[]): TokenSegment
         nextSegments.push(seg);
         continue;
       }
-      const parts = seg.text.split(ann.match);
-      if (parts.length === 1) {
-        nextSegments.push(seg);
-      } else {
-        parts.forEach((part, idx) => {
-          if (part.length > 0) {
-            nextSegments.push({ text: part });
-          }
-          if (idx < parts.length - 1) {
-            nextSegments.push({ text: ann.match, annotation: ann });
-          }
-        });
+      for (const piece of splitWithBoundaries(seg.text, ann.match)) {
+        nextSegments.push(piece.matched ? { text: piece.text, annotation: ann } : { text: piece.text });
       }
     }
     segments = nextSegments;
@@ -68,12 +88,18 @@ export default function AnnotatedCode({
   const [activeId, setActiveId] = useState<string | null>(annotations[0]?.id ?? null);
   const [explored, setExplored] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const sync = () => setExplored(loadProgress().exploredRustConcepts);
     sync();
     window.addEventListener(PROGRESS_EVENT, sync);
-    return () => window.removeEventListener(PROGRESS_EVENT, sync);
+    return () => {
+      window.removeEventListener(PROGRESS_EVENT, sync);
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+    };
   }, []);
 
   const handleSelect = (ann: CodeAnnotation) => {
@@ -85,14 +111,23 @@ export default function AnnotatedCode({
     try {
       await navigator.clipboard.writeText(code.trimEnd());
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => {
+        setCopied(false);
+        copyTimerRef.current = null;
+      }, 1600);
     } catch {
       // Ignore clipboard errors in restricted environments
     }
   };
 
   const activeAnn = annotations.find((a) => a.id === activeId) ?? null;
-  const lines = code.trimEnd().split('\n');
+  const tokenizedLines = useMemo(
+    () => code.trimEnd().split('\n').map((line) => tokenizeLine(line, annotations)),
+    [code, annotations],
+  );
 
   return (
     <div className="my-7 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1621] shadow-sm overflow-hidden">
@@ -152,8 +187,7 @@ export default function AnnotatedCode({
 
       {/* Code Area */}
       <div className="overflow-x-auto bg-[#0d1117] text-slate-200 p-4 font-mono text-[13px] leading-[1.7]">
-        {lines.map((line, idx) => {
-          const segments = tokenizeLine(line, annotations);
+        {tokenizedLines.map((segments, idx) => {
           return (
             <div key={idx} className="flex">
               <span className="select-none w-8 shrink-0 text-right pr-3 text-slate-600 text-[11.5px]">
@@ -162,7 +196,7 @@ export default function AnnotatedCode({
               <span className="whitespace-pre">
                 {segments.map((seg, sIdx) => {
                   if (!seg.annotation) {
-                    return <React.Fragment key={sIdx}>{seg.text}</React.Fragment>;
+                    return <Fragment key={sIdx}>{seg.text}</Fragment>;
                   }
                   const isSelected = seg.annotation.id === activeId;
                   return (

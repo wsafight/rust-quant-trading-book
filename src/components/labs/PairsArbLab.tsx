@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { markLabComplete } from '../../lib/progress';
 
 export default function PairsArbLab() {

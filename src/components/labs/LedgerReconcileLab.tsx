@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { markLabComplete } from '../../lib/progress';
 
 interface LedgerState {
