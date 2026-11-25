@@ -137,6 +137,7 @@ impl std::error::Error for SimulatorError {}
 struct WorkingOrder {
     request: SimOrderRequest,
     accepted_at_ns: u64,
+    arrival_sequence: u64,
     remaining_lots: i64,
     cancel_effective_at_ns: Option<u64>,
 }
@@ -192,6 +193,7 @@ impl SimulatedVenue {
                 remaining_lots: request.qty.get(),
                 request,
                 accepted_at_ns,
+                arrival_sequence: sequence,
                 cancel_effective_at_ns: None,
             },
         );
@@ -259,7 +261,19 @@ impl SimulatedVenue {
         }
         let mut updates = Vec::new();
         let mut fills = Vec::new();
-        for (client_order_id, order) in &self.orders {
+        let mut available_trade_lots = observation.trade.map_or(0, |trade| trade.qty.get());
+        let mut external_consumed_by_price = BTreeMap::new();
+        let mut orders: Vec<_> = self.orders.iter().collect();
+        orders.sort_by(|(_, left), (_, right)| {
+            let price_priority = match observation.trade.map(|trade| trade.aggressor) {
+                Some(Side::Sell) => right.request.price.cmp(&left.request.price),
+                _ => left.request.price.cmp(&right.request.price),
+            };
+            price_priority
+                .then_with(|| left.accepted_at_ns.cmp(&right.accepted_at_ns))
+                .then_with(|| left.arrival_sequence.cmp(&right.arrival_sequence))
+        });
+        for (client_order_id, order) in orders {
             if order.remaining_lots == 0 || observation.at_ns < order.accepted_at_ns {
                 continue;
             }
@@ -269,7 +283,18 @@ impl SimulatedVenue {
             {
                 continue;
             }
-            let preview = preview_fill(self.config.fill_model, order, observation);
+            let external_consumed = external_consumed_by_price
+                .entry(order.request.price)
+                .or_insert(0);
+            let preview = preview_fill(
+                self.config.fill_model,
+                order,
+                observation,
+                available_trade_lots,
+                *external_consumed,
+            );
+            available_trade_lots -= preview.consumed_trade_lots;
+            *external_consumed += preview.external_consumed_lots;
             if preview.queue_ahead_lots != order.request.queue_ahead_lots || preview.fill_lots != 0
             {
                 updates.push((
@@ -434,16 +459,22 @@ impl SimulatedVenue {
 struct FillPreview {
     fill_lots: i64,
     queue_ahead_lots: i64,
+    consumed_trade_lots: i64,
+    external_consumed_lots: i64,
 }
 
 fn preview_fill(
     model: FillModel,
     order: &WorkingOrder,
     observation: MarketObservation,
+    available_trade_lots: i64,
+    external_consumed_lots: i64,
 ) -> FillPreview {
     let unchanged = |fill_lots| FillPreview {
         fill_lots,
         queue_ahead_lots: order.request.queue_ahead_lots,
+        consumed_trade_lots: 0,
+        external_consumed_lots: 0,
     };
     match model {
         FillModel::Touch => {
@@ -453,13 +484,24 @@ fn preview_fill(
             };
             unchanged(if touched { order.remaining_lots } else { 0 })
         }
-        FillModel::TradeThrough => unchanged(observation.trade.map_or(0, |trade| {
-            let through = match order.request.side {
-                Side::Buy => trade.aggressor == Side::Sell && trade.price < order.request.price,
-                Side::Sell => trade.aggressor == Side::Buy && trade.price > order.request.price,
-            };
-            if through { order.remaining_lots } else { 0 }
-        })),
+        FillModel::TradeThrough => observation.trade.map_or_else(
+            || unchanged(0),
+            |trade| {
+                let through = match order.request.side {
+                    Side::Buy => trade.aggressor == Side::Sell && trade.price < order.request.price,
+                    Side::Sell => trade.aggressor == Side::Buy && trade.price > order.request.price,
+                };
+                let fill_lots = if through {
+                    order.remaining_lots.min(available_trade_lots)
+                } else {
+                    0
+                };
+                FillPreview {
+                    consumed_trade_lots: fill_lots,
+                    ..unchanged(fill_lots)
+                }
+            },
+        ),
         FillModel::L2Queue => observation.trade.map_or_else(
             || unchanged(0),
             |trade| {
@@ -475,15 +517,29 @@ fn preview_fill(
                     Side::Sell => trade.price > order.request.price,
                 };
                 if through {
-                    return unchanged(order.remaining_lots);
+                    let fill_lots = order.remaining_lots.min(available_trade_lots);
+                    return FillPreview {
+                        fill_lots,
+                        queue_ahead_lots: 0,
+                        consumed_trade_lots: fill_lots,
+                        external_consumed_lots: 0,
+                    };
                 }
                 if trade.price != order.request.price {
                     return unchanged(0);
                 }
-                let queue_consumed = order.request.queue_ahead_lots.min(trade.qty.get());
+                let queue_ahead = order
+                    .request
+                    .queue_ahead_lots
+                    .saturating_sub(external_consumed_lots)
+                    .max(0);
+                let queue_consumed = queue_ahead.min(available_trade_lots);
+                let fill_lots = (available_trade_lots - queue_consumed).min(order.remaining_lots);
                 FillPreview {
-                    fill_lots: (trade.qty.get() - queue_consumed).min(order.remaining_lots),
-                    queue_ahead_lots: order.request.queue_ahead_lots - queue_consumed,
+                    fill_lots,
+                    queue_ahead_lots: queue_ahead - queue_consumed,
+                    consumed_trade_lots: queue_consumed + fill_lots,
+                    external_consumed_lots: queue_consumed,
                 }
             },
         ),
@@ -597,6 +653,147 @@ mod tests {
                 remaining_lots: 1,
             }
         );
+    }
+
+    #[test]
+    fn trade_models_share_volume_in_price_time_order() {
+        for model in [FillModel::L2Queue, FillModel::TradeThrough] {
+            for side in [Side::Buy, Side::Sell] {
+                let mut venue = SimulatedVenue::new(config(model), "SIM", "paper", "BTC");
+                let (better, worse, trade_price, aggressor) = match side {
+                    Side::Buy => (101, 100, 99, Side::Sell),
+                    Side::Sell => (100, 101, 102, Side::Buy),
+                };
+                venue.submit(request("a-worse", side, worse, 2), 0).unwrap();
+                venue
+                    .submit(request("z-first", side, better, 2), 1)
+                    .unwrap();
+                venue
+                    .submit(request("b-second", side, better, 2), 1)
+                    .unwrap();
+                venue
+                    .on_market(MarketObservation {
+                        at_ns: 10,
+                        best_bid: price(100),
+                        best_ask: price(101),
+                        trade: Some(MarketTrade {
+                            aggressor,
+                            price: price(trade_price),
+                            qty: qty(3),
+                        }),
+                    })
+                    .unwrap();
+                let fills: Vec<_> = venue
+                    .drain_reports(100)
+                    .into_iter()
+                    .filter_map(|report| match report.report {
+                        VenueReport::Fill(fill) => {
+                            Some((report.client_order_id.as_str().to_owned(), fill.qty.get()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(fills, vec![("z-first".into(), 2), ("b-second".into(), 1)]);
+            }
+        }
+    }
+
+    #[test]
+    fn same_price_orders_share_external_queue_consumption() {
+        let mut venue = SimulatedVenue::new(config(FillModel::L2Queue), "SIM", "paper", "BTC");
+        for id in ["z-first", "a-second"] {
+            let mut order = request(id, Side::Buy, 100, 2);
+            order.queue_ahead_lots = 1;
+            venue.submit(order, 0).unwrap();
+        }
+        venue
+            .on_market(MarketObservation {
+                at_ns: 10,
+                best_bid: price(100),
+                best_ask: price(101),
+                trade: Some(MarketTrade {
+                    aggressor: Side::Sell,
+                    price: price(100),
+                    qty: qty(4),
+                }),
+            })
+            .unwrap();
+        assert_eq!(
+            venue
+                .reconcile(&ClientOrderId::new("z-first").unwrap(), 10)
+                .unwrap()
+                .filled_lots,
+            2
+        );
+        assert_eq!(
+            venue
+                .reconcile(&ClientOrderId::new("a-second").unwrap(), 10)
+                .unwrap()
+                .filled_lots,
+            1
+        );
+    }
+
+    #[test]
+    fn touch_remains_an_optimistic_quote_based_model() {
+        let mut venue = SimulatedVenue::new(config(FillModel::Touch), "SIM", "paper", "BTC");
+        for id in ["first", "second"] {
+            venue.submit(request(id, Side::Buy, 101, 2), 0).unwrap();
+        }
+        venue
+            .on_market(MarketObservation {
+                at_ns: 10,
+                best_bid: price(100),
+                best_ask: price(101),
+                trade: None,
+            })
+            .unwrap();
+        for id in ["first", "second"] {
+            assert_eq!(
+                venue
+                    .reconcile(&ClientOrderId::new(id).unwrap(), 10)
+                    .unwrap()
+                    .filled_lots,
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn exhausted_trade_updates_other_orders_external_queue_without_filling() {
+        let mut venue = SimulatedVenue::new(config(FillModel::L2Queue), "SIM", "paper", "BTC");
+        for id in ["z-first", "a-second"] {
+            let mut order = request(id, Side::Buy, 100, 2);
+            order.queue_ahead_lots = 4;
+            venue.submit(order, 0).unwrap();
+        }
+        for at_ns in [10, 11] {
+            venue
+                .on_market(MarketObservation {
+                    at_ns,
+                    best_bid: price(100),
+                    best_ask: price(101),
+                    trade: Some(MarketTrade {
+                        aggressor: Side::Sell,
+                        price: price(100),
+                        qty: qty(3),
+                    }),
+                })
+                .unwrap();
+        }
+        assert_eq!(
+            venue
+                .reconcile(&ClientOrderId::new("z-first").unwrap(), 11)
+                .unwrap()
+                .filled_lots,
+            2
+        );
+        let second = venue
+            .orders
+            .get(&ClientOrderId::new("a-second").unwrap())
+            .unwrap();
+        assert_eq!(second.remaining_lots, 2);
+        assert_eq!(second.request.queue_ahead_lots, 0);
     }
 
     #[test]

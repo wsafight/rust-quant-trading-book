@@ -24,6 +24,72 @@ fn execution(id: &str) -> ExecutionKey {
 }
 
 #[test]
+fn stale_and_overlapping_deltas_preserve_a_continuous_book() {
+    let mut book = OrderBook::default();
+    book.apply_snapshot(Snapshot {
+        sequence: 100,
+        bids: vec![(price(99), 2)],
+        asks: vec![(price(101), 3)],
+    })
+    .unwrap();
+    for (first_sequence, last_sequence) in [(98, 98), (99, 100), (100, 100)] {
+        book.apply_delta(Delta {
+            first_sequence,
+            last_sequence,
+            bids: vec![(price(102), 10)],
+            asks: vec![],
+        })
+        .unwrap();
+        assert!(book.is_tradable());
+        assert_eq!(book.last_sequence(), Some(100));
+        assert_eq!(book.best_bid(), Some((price(99), 2)));
+    }
+    book.apply_delta(Delta {
+        first_sequence: 100,
+        last_sequence: 102,
+        bids: vec![(price(100), 4)],
+        asks: vec![],
+    })
+    .unwrap();
+    assert!(book.is_tradable());
+    assert_eq!(book.last_sequence(), Some(102));
+    assert_eq!(book.best_bid(), Some((price(100), 4)));
+}
+
+#[test]
+fn invalid_old_range_still_revokes_book_and_old_packets_cannot_restore_it() {
+    let mut book = OrderBook::default();
+    book.apply_snapshot(Snapshot {
+        sequence: 100,
+        bids: vec![(price(99), 2)],
+        asks: vec![(price(101), 3)],
+    })
+    .unwrap();
+    assert_eq!(
+        book.apply_delta(Delta {
+            first_sequence: 99,
+            last_sequence: 98,
+            bids: vec![],
+            asks: vec![],
+        }),
+        Err(BookError::InvalidSequenceRange {
+            first: 99,
+            last: 98
+        })
+    );
+    assert!(!book.is_tradable());
+    assert_eq!(
+        book.apply_delta(Delta {
+            first_sequence: 98,
+            last_sequence: 98,
+            bids: vec![],
+            asks: vec![],
+        }),
+        Err(BookError::NeedsSnapshot)
+    );
+}
+
+#[test]
 fn sequence_gap_invalidates_book_until_snapshot() {
     let mut book = OrderBook::default();
     book.apply_snapshot(Snapshot {
@@ -118,6 +184,42 @@ fn fill_before_ack_is_absorbed_without_state_regression() {
     let order = reduce(order, OrderEvent::NewAck).unwrap();
     assert_eq!(order.status(), OrderStatus::Filled);
     assert_eq!(order.filled_qty(), 10);
+}
+
+#[test]
+fn reused_execution_with_changed_quantity_is_rejected_even_after_terminal_state() {
+    for initial_qty in [2, 10] {
+        let initial = reduce(
+            order(),
+            OrderEvent::Fill {
+                key: execution("same-id"),
+                qty: qty(initial_qty),
+            },
+        )
+        .unwrap();
+        let duplicate = reduce(
+            initial.clone(),
+            OrderEvent::Fill {
+                key: execution("same-id"),
+                qty: qty(initial_qty),
+            },
+        )
+        .unwrap();
+        assert_eq!(duplicate, initial);
+        assert_eq!(
+            reduce(
+                initial,
+                OrderEvent::Fill {
+                    key: execution("same-id"),
+                    qty: qty(3),
+                }
+            ),
+            Err(ReduceError::ConflictingExecution {
+                previous: initial_qty,
+                received: 3
+            })
+        );
+    }
 }
 
 #[test]

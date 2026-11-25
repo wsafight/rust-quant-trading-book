@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::domain::{ClientOrderId, ExecutionKey, QtyLots};
@@ -27,7 +27,7 @@ pub struct Order {
     total_qty: QtyLots,
     filled_qty: i64,
     status: OrderStatus,
-    executions: HashSet<ExecutionKey>,
+    executions: HashMap<ExecutionKey, QtyLots>,
 }
 
 impl Order {
@@ -37,12 +37,12 @@ impl Order {
             total_qty,
             filled_qty: 0,
             status: OrderStatus::PendingNew,
-            executions: HashSet::new(),
+            executions: HashMap::new(),
         }
     }
 
     pub fn has_execution(&self, key: &ExecutionKey) -> bool {
-        self.executions.contains(key)
+        self.executions.contains_key(key)
     }
 
     pub fn client_order_id(&self) -> &ClientOrderId {
@@ -75,6 +75,7 @@ pub enum OrderEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReduceError {
     IllegalTransition,
+    ConflictingExecution { previous: i64, received: i64 },
     Overfill { total: i64, attempted: i128 },
 }
 
@@ -82,6 +83,10 @@ impl fmt::Display for ReduceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::IllegalTransition => f.write_str("illegal order state transition"),
+            Self::ConflictingExecution { previous, received } => write!(
+                f,
+                "execution key was reused with a different quantity: previous {previous}, received {received}"
+            ),
             Self::Overfill { total, attempted } => {
                 write!(
                     f,
@@ -97,8 +102,15 @@ impl std::error::Error for ReduceError {}
 pub fn reduce(mut order: Order, event: OrderEvent) -> Result<Order, ReduceError> {
     match event {
         OrderEvent::Fill { key, qty } => {
-            if order.executions.contains(&key) {
-                return Ok(order);
+            if let Some(previous) = order.executions.get(&key) {
+                return if *previous == qty {
+                    Ok(order)
+                } else {
+                    Err(ReduceError::ConflictingExecution {
+                        previous: previous.get(),
+                        received: qty.get(),
+                    })
+                };
             }
             if order.status == OrderStatus::Rejected {
                 return Err(ReduceError::IllegalTransition);
@@ -111,7 +123,7 @@ pub fn reduce(mut order: Order, event: OrderEvent) -> Result<Order, ReduceError>
                     attempted,
                 });
             }
-            order.executions.insert(key);
+            order.executions.insert(key, qty);
             order.filled_qty = attempted as i64;
             order.status = if attempted == i128::from(order.total_qty.get()) {
                 OrderStatus::Filled

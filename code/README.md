@@ -36,6 +36,10 @@ cargo bench --locked --manifest-path code/Cargo.toml --bench parse_level
 
 ## 边界说明
 
+- 章节保留自包含教学示例，不导入引擎源码；简化的范围在章节正文说明。引擎的 `TradeThrough` / `L2Queue` 按价格、到达时间和接收序号共享逐笔成交量，`Touch` 刻意保留不受逐笔成交量约束的乐观假设。
+- `queue_ahead_lots` 表示同价位外部排队量，不包含本模拟器的其他订单；同价订单共享外部队列消耗，自有订单按到达顺序分配剩余量。这是固定排队量模型，不推断撤单或隐藏流动性。
+- 行情旧包幂等忽略，重叠区间只要覆盖下一个期望序号即可继续；真正的缺口、无效区间与交叉盘口必须重新加载快照。
+- OMS 核对成交键与数量，账本进一步核对价格、方向与费用；冲突回报必须进入错误处理，不能按成功重传吞掉。
 - `demo` 将 order book、hard risk、模拟 venue、OMS、ledger 和 replay 串联，依次注入 fill-before-ack、duplicate fill、sequence gap 与 cancel timeout，仅验证离线状态边界，不代表实盘盈利策略。
 - 当前 crate 刻意保持最小离线核，不包含实盘连接器、事件日志持久化或生产风控告警平台；任何实盘接入都应另建独立 adapter，并默认从公开数据、只读权限或测试网起步。
 - 回放事件的 `local_sequence` 必须来自输入事件日志并在同一 `(at_ns, priority)` 下唯一，不可用读取器插入顺序替代。

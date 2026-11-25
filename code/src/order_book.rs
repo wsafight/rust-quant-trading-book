@@ -112,6 +112,10 @@ impl OrderBook {
             });
         }
 
+        if delta.last_sequence <= last_sequence {
+            return Ok(());
+        }
+
         let Some(expected) = last_sequence.checked_add(1) else {
             self.valid = false;
             return Err(BookError::NeedsSnapshot);

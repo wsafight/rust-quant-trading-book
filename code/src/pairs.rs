@@ -26,7 +26,8 @@ pub fn z_score(spread: f64, mean: f64, std: f64) -> Option<f64> {
     if !spread.is_finite() || !mean.is_finite() || !std.is_finite() || std <= 1e-12 {
         return None;
     }
-    Some((spread - mean) / std)
+    let result = (spread - mean) / std;
+    result.is_finite().then_some(result)
 }
 
 /// Evaluates pair trading signal with a hard regime-break stop-loss ceiling.
@@ -78,6 +79,8 @@ mod tests {
     fn z_score_rejects_zero_or_non_finite_std() {
         assert_eq!(z_score(10.0, 10.0, 0.0), None);
         assert_eq!(z_score(10.0, 10.0, f64::NAN), None);
+        assert_eq!(z_score(f64::MAX, -f64::MAX, 1.0), None);
+        assert_eq!(z_score(f64::MAX, 0.0, 0.5), None);
         let z = z_score(12.0, 10.0, 1.0).expect("valid z-score");
         assert!((z - 2.0).abs() < 1e-12);
     }
