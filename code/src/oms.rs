@@ -172,7 +172,8 @@ pub fn reduce(mut order: Order, event: OrderEvent) -> Result<Order, ReduceError>
         OrderEvent::CancelAck
             if matches!(
                 order.status,
-                OrderStatus::Open
+                OrderStatus::PendingNew
+                    | OrderStatus::Open
                     | OrderStatus::PartiallyFilled
                     | OrderStatus::PendingCancel
                     | OrderStatus::Uncertain

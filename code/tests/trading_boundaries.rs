@@ -359,6 +359,15 @@ fn cancelled_late_fill_that_completes_order_becomes_filled() {
 }
 
 #[test]
+fn cancel_ack_before_new_ack_transitions_to_cancelled_and_ignores_late_new_ack() {
+    let order = reduce(order(), OrderEvent::CancelAck).unwrap();
+    assert_eq!(order.status(), OrderStatus::Cancelled);
+
+    let order = reduce(order, OrderEvent::NewAck).unwrap();
+    assert_eq!(order.status(), OrderStatus::Cancelled);
+}
+
+#[test]
 fn risk_counts_active_and_uncertain_orders_in_worst_case() {
     let decision = check(
         OrderIntent {

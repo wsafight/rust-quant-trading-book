@@ -9,13 +9,15 @@ pub struct OptionInput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CallGreeks {
+pub struct OptionGreeks {
     pub price: f64,
     pub delta: f64,
     pub gamma: f64,
     pub vega_per_pct: f64,
     pub theta_per_day: f64,
 }
+
+pub type CallGreeks = OptionGreeks;
 
 impl OptionInput {
     pub fn validate(self) -> Option<Self> {
@@ -84,6 +86,24 @@ pub fn black_scholes_call(input: OptionInput) -> Option<CallGreeks> {
     })
 }
 
+/// Computes Black-Scholes put price and Greeks (zero risk-free rate for crypto/futures intuition).
+pub fn black_scholes_put(input: OptionInput) -> Option<OptionGreeks> {
+    let call = black_scholes_call(input)?;
+    // Under r = 0, put-call parity gives P = C - S + K and Delta_put = Delta_call - 1.
+    let price = (call.price - input.spot + input.strike).max(0.0);
+    let delta = call.delta - 1.0;
+    if !price.is_finite() || !delta.is_finite() {
+        return None;
+    }
+    Some(OptionGreeks {
+        price,
+        delta,
+        gamma: call.gamma,
+        vega_per_pct: call.vega_per_pct,
+        theta_per_day: call.theta_per_day,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +117,7 @@ mod tests {
             iv: 0.45,
         };
         assert_eq!(black_scholes_call(bad), None);
+        assert_eq!(black_scholes_put(bad), None);
     }
 
     #[test]
@@ -112,6 +133,25 @@ mod tests {
         assert!(g.gamma > 0.0);
         assert!(g.vega_per_pct > 0.0);
         assert!(g.theta_per_day < 0.0);
+    }
+
+    #[test]
+    fn put_satisfies_put_call_parity_and_greeks_relations() {
+        let inp = OptionInput {
+            spot: 105.0,
+            strike: 100.0,
+            time_years: 30.0 / 365.0,
+            iv: 0.55,
+        };
+        let call = black_scholes_call(inp).expect("valid call");
+        let put = black_scholes_put(inp).expect("valid put");
+
+        assert!(((call.price - put.price) - (inp.spot - inp.strike)).abs() < 1e-10);
+        assert!(((call.delta - put.delta) - 1.0).abs() < 1e-12);
+        assert!(put.delta < 0.0 && put.delta > -1.0);
+        assert_eq!(put.gamma, call.gamma);
+        assert_eq!(put.vega_per_pct, call.vega_per_pct);
+        assert_eq!(put.theta_per_day, call.theta_per_day);
     }
 
     #[test]
